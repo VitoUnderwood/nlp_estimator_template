@@ -8,6 +8,9 @@ tensorflow的Estimator高级API，将模型的train, eval, predict, save规范�
 - numpy 1.16.0 解决warning
 - cudatookit 10.0, cudnn 7.4
 
+## 主体架构
+![img.png](img.png)
+
 
 ## 参考链接
 - https://zhuanlan.zhihu.com/p/112062303
