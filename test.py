@@ -17,3 +17,7 @@ print(tokenizer.wordpiece_tokenizer.tokenize("傻逼 学校"))
 # es.evaluate()
 # es.predict()
 # es.export_savedmodel
+
+with open("data/train.txt", 'r') as f:
+      line = f.readline()
+line.replace(r'\\', "\\")

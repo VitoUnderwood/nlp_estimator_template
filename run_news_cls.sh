@@ -1,5 +1,5 @@
 export BERT_BASE_DIR=/Users/vito/PyCharmProjects/nlp_estimator_template/checkpoints/chinese_L-12_H-768_A-12
-export DATA_DIR=/Users/vito/PyCharmProjects/nlp_estimator_template/data
+export DATA_DIR=/Users/vito/PyCharmProjects/nlp_estimator_template/data/THUCNews
 export OUTPUT_DIR=/Users/vito/PyCharmProjects/nlp_estimator_template/checkpoints/news_cls
 
 python run_news_cls.py \
