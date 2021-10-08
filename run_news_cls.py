@@ -39,8 +39,6 @@ flags.DEFINE_string(
     "The config json file corresponding to the pre-trained BERT model. "
     "This specifies the model architecture.")
 
-flags.DEFINE_string("task_name", None, "The name of the task to train.")
-
 flags.DEFINE_string("vocab_file", None,
                     "The vocabulary file that the BERT model was trained on.")
 
@@ -768,7 +766,6 @@ def main(_):
 
 if __name__ == "__main__":
   flags.mark_flag_as_required("data_dir")
-  flags.mark_flag_as_required("task_name")
   flags.mark_flag_as_required("vocab_file")
   flags.mark_flag_as_required("bert_config_file")
   flags.mark_flag_as_required("output_dir")
