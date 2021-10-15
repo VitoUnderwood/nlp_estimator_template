@@ -1,17 +1,4 @@
 # coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 """BERT finetuning runner."""
 
 import collections
@@ -491,8 +478,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             bert_config, is_training, input_ids, input_mask, segment_ids, label_ids,
             num_labels)
 
-        scaffold_fn = None
-
         tvars = tf.trainable_variables()
         initialized_variable_names = {}
 
@@ -511,38 +496,32 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape,
                             init_string)
 
-        if mode == tf.estimator.ModeKeys.TRAIN:
+        train_op = optimization.create_optimizer(
+            total_loss, learning_rate, num_train_steps, num_warmup_steps)
 
-            train_op = optimization.create_optimizer(
-                total_loss, learning_rate, num_train_steps, num_warmup_steps)
+        def metric_fn(per_example_loss, label_ids, logits, is_real_example):
+            predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
+            accuracy = tf.metrics.accuracy(
+                labels=label_ids, predictions=predictions, weights=is_real_example)
+            loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
+            return {
+                "eval_accuracy": accuracy,
+                "eval_loss": loss,
+            }
 
+        eval_metrics = metric_fn(per_example_loss, label_ids, logits, is_real_example)
+
+        output_spec = tf.estimator.EstimatorSpec(
+            mode=mode,
+            loss=total_loss,
+            train_op=train_op,
+            eval_metric_ops=eval_metrics)
+
+        if mode == tf.estimator.ModeKeys.PREDICT:
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
-                loss=total_loss,
-                train_op=train_op,
-                scaffold=scaffold_fn)
-        elif mode == tf.estimator.ModeKeys.EVAL:
+                predictions={"probabilities": probabilities})
 
-            def metric_fn(per_example_loss, label_ids, logits, is_real_example):
-                predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
-                accuracy = tf.metrics.accuracy(
-                    labels=label_ids, predictions=predictions, weights=is_real_example)
-                loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
-                return {
-                    "eval_accuracy": accuracy,
-                    "eval_loss": loss,
-                }
-
-            eval_metrics = metric_fn(per_example_loss, label_ids, logits, is_real_example)
-            output_spec = tf.estimator.EstimatorSpec(
-                mode=mode,
-                loss=total_loss,
-                eval_metric_ops=eval_metrics)
-        else:
-            output_spec = tf.estimator.EstimatorSpec(
-                mode=mode,
-                predictions={"probabilities": probabilities},
-                scaffold=scaffold_fn)
         return output_spec
 
     return model_fn
@@ -649,12 +628,19 @@ def main(_):
         config=run_config,
         params={'batch_size': FLAGS.train_batch_size})
 
-    if FLAGS.do_train:
+    if FLAGS.do_train and FLAGS.do_eval:
         train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
+        eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
+
+        eval_examples = processor.get_dev_examples(FLAGS.data_dir)
+        num_actual_eval_examples = len(eval_examples)
 
         if not tf.gfile.Exists(train_file):
             file_based_convert_examples_to_features(
                 train_examples, label_list, FLAGS.max_seq_length, tokenizer, train_file)
+        if not tf.gfile.Exists(eval_file):
+            file_based_convert_examples_to_features(
+                eval_examples, label_list, FLAGS.max_seq_length, tokenizer, eval_file)
 
         tf.logging.info("***** Running training *****")
         tf.logging.info("  Num examples = %d", len(train_examples))
@@ -666,15 +652,7 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=True,
             drop_remainder=True)
-        estimator.train(input_fn=train_input_fn, max_steps=num_train_steps)
 
-    if FLAGS.do_eval:
-        eval_examples = processor.get_dev_examples(FLAGS.data_dir)
-        num_actual_eval_examples = len(eval_examples)
-
-        eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
-        file_based_convert_examples_to_features(
-            eval_examples, label_list, FLAGS.max_seq_length, tokenizer, eval_file)
 
         tf.logging.info("***** Running evaluation *****")
         tf.logging.info("  Num examples = %d (%d actual, %d padding)",
@@ -682,13 +660,23 @@ def main(_):
                         len(eval_examples) - num_actual_eval_examples)
         tf.logging.info("  Batch size = %d", FLAGS.eval_batch_size)
 
-        # This tells the estimator to run through the entire set.
-
         eval_input_fn = file_based_input_fn_builder(
             input_file=eval_file,
             seq_length=FLAGS.max_seq_length,
             is_training=False,
             drop_remainder=False)
+
+        # early stop hook
+        early_stopping_hook = tf.estimator.experimental.stop_if_no_decrease_hook(estimator,
+                                                                  metric_name="loss",
+                                                                  max_steps_without_decrease=1000)
+
+        tf.estimator.train_and_evaluate(estimator,
+                                        train_spec=tf.estimator.TrainSpec(train_input_fn, hooks=[early_stopping_hook]),
+                                        eval_spec=tf.estimator.EvalSpec(eval_input_fn)
+                                        )
+
+        # estimator.train(input_fn=train_input_fn, hooks=[hook], max_steps=num_train_steps)
 
         result = estimator.evaluate(input_fn=eval_input_fn)
 
@@ -698,6 +686,7 @@ def main(_):
             for key in sorted(result.keys()):
                 tf.logging.info("  %s = %s", key, str(result[key]))
                 writer.write("%s = %s\n" % (key, str(result[key])))
+
 
     if FLAGS.do_predict:
         predict_examples = processor.get_test_examples(FLAGS.data_dir)
