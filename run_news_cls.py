@@ -132,13 +132,11 @@ class InputFeatures(object):
                  input_ids,
                  input_mask,
                  segment_ids,
-                 label_id,
-                 is_real_example=True):
+                 label_id):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
         self.label_id = label_id
-        self.is_real_example = is_real_example
 
 
 class DataProcessor(object):
@@ -204,12 +202,17 @@ class NewsProcessor(DataProcessor):
             if i == 0:
                 continue
             guid = f"{set_type}-{i}"
-            if set_type == "tesladfjlasdjflasjdf":
-                text_a = tokenization.convert_to_unicode(line[1])
-                label = "0"
-            else:
-                text_a = tokenization.convert_to_unicode(line[1])
-                label = tokenization.convert_to_unicode(line[2])
+
+            # if set_type == "tesladfjlasdjflasjdf":
+            #     text_a = tokenization.convert_to_unicode(line[1])
+            #     label = "0"
+            # else:
+            #     text_a = tokenization.convert_to_unicode(line[1])
+            #     label = tokenization.convert_to_unicode(line[2])
+
+            text_a = tokenization.convert_to_unicode(line[1])
+            label = tokenization.convert_to_unicode(line[2])
+
             examples.append(
                 InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
         return examples
@@ -312,8 +315,7 @@ def convert_single_example(example, label_list, max_seq_length,
         input_ids=input_ids,
         input_mask=input_mask,
         segment_ids=segment_ids,
-        label_id=label_id,
-        is_real_example=True)
+        label_id=label_id)
     return feature
 
 
@@ -339,8 +341,6 @@ def file_based_convert_examples_to_features(
         features["input_mask"] = create_int_feature(feature.input_mask)
         features["segment_ids"] = create_int_feature(feature.segment_ids)
         features["label_ids"] = create_int_feature([feature.label_id])
-        features["is_real_example"] = create_int_feature(
-            [int(feature.is_real_example)])
 
         tf_example = tf.train.Example(features=tf.train.Features(feature=features))
         writer.write(tf_example.SerializeToString())
@@ -362,9 +362,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
         "input_ids": tf.FixedLenFeature([seq_length], tf.int64),
         "input_mask": tf.FixedLenFeature([seq_length], tf.int64),
         "segment_ids": tf.FixedLenFeature([seq_length], tf.int64),
-        "label_ids": tf.FixedLenFeature([], tf.int64),
-        "is_real_example": tf.FixedLenFeature([], tf.int64),
-    }
+        "label_ids": tf.FixedLenFeature([], tf.int64)}
 
     def _decode_record(record, name_to_features):
         """Decodes a record to a TensorFlow example."""
@@ -452,11 +450,31 @@ def create_model(bert_config, is_training, input_ids, input_mask, segment_ids,
         return (loss, per_example_loss, logits, probabilities)
 
 
-def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
-                     num_train_steps, num_warmup_steps):
+def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate):
     """Returns `model_fn` closure for Estimator."""
 
     def model_fn(features, labels, mode, params, config):
+        """
+        if (mode == tf.estimator.ModeKeys.TRAIN or
+                mode == tf.estimator.ModeKeys.EVAL):
+            loss = ...
+        else:
+            loss = None
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            train_op = ...
+        else:
+            train_op = None
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            predictions = ...
+        else:
+            predictions = None
+
+        return tf.estimator.EstimatorSpec(
+            mode=mode,
+            predictions=predictions,
+            loss=loss,
+            train_op=train_op)
+        """
         tf.logging.info("*** Features ***")
 
         for name in sorted(features.keys()):
@@ -466,11 +484,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
         input_mask = features["input_mask"]
         segment_ids = features["segment_ids"]
         label_ids = features["label_ids"]
-
-        if "is_real_example" in features:
-            is_real_example = tf.cast(features["is_real_example"], dtype=tf.float32)
-        else:
-            is_real_example = tf.ones(tf.shape(label_ids), dtype=tf.float32)
 
         is_training = (mode == tf.estimator.ModeKeys.TRAIN)
 
@@ -486,7 +499,6 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
              ) = modeling.get_assignment_map_from_checkpoint(tvars, init_checkpoint)
 
             tf.train.init_from_checkpoint(init_checkpoint, assignment_map)
-            scaffold_fn = tf.train.Scaffold()
 
         tf.logging.info("**** Trainable Variables ****")
         for var in tvars:
@@ -496,20 +508,23 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             tf.logging.info("  name = %s, shape = %s%s", var.name, var.shape,
                             init_string)
 
-        train_op = optimization.create_optimizer(
-            total_loss, learning_rate, num_train_steps, num_warmup_steps)
+        train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(total_loss,
+                                                                                global_step=tf.train.get_global_step())
+        # train_op = optimization.create_optimizer(
+        #     total_loss, learning_rate, num_train_steps, num_warmup_steps)
 
-        def metric_fn(per_example_loss, label_ids, logits, is_real_example):
+        def metric_fn(per_example_loss, label_ids, logits):
             predictions = tf.argmax(logits, axis=-1, output_type=tf.int32)
+            # weights 做为mask 1 0
             accuracy = tf.metrics.accuracy(
-                labels=label_ids, predictions=predictions, weights=is_real_example)
-            loss = tf.metrics.mean(values=per_example_loss, weights=is_real_example)
+                labels=label_ids, predictions=predictions)
+            loss = tf.metrics.mean(values=per_example_loss)
             return {
                 "eval_accuracy": accuracy,
                 "eval_loss": loss,
             }
 
-        eval_metrics = metric_fn(per_example_loss, label_ids, logits, is_real_example)
+        eval_metrics = metric_fn(per_example_loss, label_ids, logits)
 
         output_spec = tf.estimator.EstimatorSpec(
             mode=mode,
@@ -521,9 +536,7 @@ def model_fn_builder(bert_config, num_labels, init_checkpoint, learning_rate,
             output_spec = tf.estimator.EstimatorSpec(
                 mode=mode,
                 predictions={"probabilities": probabilities})
-
         return output_spec
-
     return model_fn
 
 
@@ -597,24 +610,11 @@ def main(_):
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
-    train_examples = None
-    num_train_steps = None
-    num_warmup_steps = None
-
-    if FLAGS.do_train:
-        train_examples = processor.get_train_examples(FLAGS.data_dir)
-        # 训练的总批数
-        num_train_steps = int(
-            len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
-        num_warmup_steps = int(num_train_steps * FLAGS.warmup_proportion)
-
     model_fn = model_fn_builder(
         bert_config=bert_config,
         num_labels=len(label_list),
         init_checkpoint=FLAGS.init_checkpoint,
-        learning_rate=FLAGS.learning_rate,
-        num_train_steps=num_train_steps,
-        num_warmup_steps=num_warmup_steps)
+        learning_rate=FLAGS.learning_rate)
 
     # 普通的Estimator
     run_config = tf.estimator.RunConfig(
@@ -631,6 +631,11 @@ def main(_):
     if FLAGS.do_train and FLAGS.do_eval:
         train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
+
+        train_examples = processor.get_train_examples(FLAGS.data_dir)
+        # 训练的总批数
+        num_train_steps = int(
+            len(train_examples) / FLAGS.train_batch_size * FLAGS.num_train_epochs)
 
         eval_examples = processor.get_dev_examples(FLAGS.data_dir)
         num_actual_eval_examples = len(eval_examples)
@@ -652,7 +657,6 @@ def main(_):
             seq_length=FLAGS.max_seq_length,
             is_training=True,
             drop_remainder=True)
-
 
         tf.logging.info("***** Running evaluation *****")
         tf.logging.info("  Num examples = %d (%d actual, %d padding)",
@@ -677,16 +681,14 @@ def main(_):
                                         )
 
         # estimator.train(input_fn=train_input_fn, hooks=[hook], max_steps=num_train_steps)
-
-        result = estimator.evaluate(input_fn=eval_input_fn)
-
-        output_eval_file = os.path.join(FLAGS.output_dir, "eval_results.txt")
-        with tf.gfile.GFile(output_eval_file, "w") as writer:
-            tf.logging.info("***** Eval results *****")
-            for key in sorted(result.keys()):
-                tf.logging.info("  %s = %s", key, str(result[key]))
-                writer.write("%s = %s\n" % (key, str(result[key])))
-
+        # result = estimator.evaluate(input_fn=eval_input_fn)
+        #
+        # output_eval_file = os.path.join(FLAGS.output_dir, "eval_results.txt")
+        # with tf.gfile.GFile(output_eval_file, "w") as writer:
+        #     tf.logging.info("***** Eval results *****")
+        #     for key in sorted(result.keys()):
+        #         tf.logging.info("  %s = %s", key, str(result[key]))
+        #         writer.write("%s = %s\n" % (key, str(result[key])))
 
     if FLAGS.do_predict:
         predict_examples = processor.get_test_examples(FLAGS.data_dir)
