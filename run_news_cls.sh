@@ -60,6 +60,6 @@ python run_news_cls.py \
 #  --data_dir=$DATA_DIR/ \
 #  --vocab_file=$BERT_BASE_DIR/vocab.txt \
 #  --bert_config_file=$BERT_BASE_DIR/bert_config.json \
-#  --init_checkpoint=$TRAINED_CLASSIFIER \
+#  --init_checkpoint=$BERT_BASE_DIR/bert_model.ckpt \
 #  --max_seq_length=128 \
 #  --output_dir=$OUTPUT_DIR

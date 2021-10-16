@@ -627,7 +627,6 @@ def main(_):
         model_fn=model_fn,
         config=run_config,
         params={'batch_size': FLAGS.train_batch_size})
-
     if FLAGS.do_train and FLAGS.do_eval:
         train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
@@ -646,7 +645,6 @@ def main(_):
         if not tf.gfile.Exists(eval_file):
             file_based_convert_examples_to_features(
                 eval_examples, label_list, FLAGS.max_seq_length, tokenizer, eval_file)
-
         tf.logging.info("***** Running training *****")
         tf.logging.info("  Num examples = %d", len(train_examples))
         tf.logging.info("  Batch size = %d", FLAGS.train_batch_size)
