@@ -679,8 +679,10 @@ def main(_):
                                         train_spec=tf.estimator.TrainSpec(train_input_fn, hooks=[early_stopping_hook]),
                                         eval_spec=tf.estimator.EvalSpec(eval_input_fn)
                                         )
+        # train_and_evaluate 只会保留训练过程的summary和checkpoints，想要保存eval结果需要自己写
 
         # estimator.train(input_fn=train_input_fn, hooks=[hook], max_steps=num_train_steps)
+
         # result = estimator.evaluate(input_fn=eval_input_fn)
         #
         # output_eval_file = os.path.join(FLAGS.output_dir, "eval_results.txt")
