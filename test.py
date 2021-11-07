@@ -2,8 +2,9 @@
 from models.bert import tokenization
 
 tokenizer = tokenization.FullTokenizer(
-      vocab_file="checkpoints/chinese_L-12_H-768_A-12/vocab.txt")
-print(tokenizer.wordpiece_tokenizer.tokenize("傻逼 学校"))
+      vocab_file="data/NMT/vocab.txt")
+print(tokenizer.tokenize("hello world"))
+print(tokenizer.convert_tokens_to_ids(['ausländer', 'world']))
 # examples = extract_features.read_examples("data/train.txt")
 # print(examples)
 # features = extract_features.convert_examples_to_features(
@@ -17,7 +18,3 @@ print(tokenizer.wordpiece_tokenizer.tokenize("傻逼 学校"))
 # es.evaluate()
 # es.predict()
 # es.export_savedmodel
-
-with open("data/train.txt", 'r') as f:
-      line = f.readline()
-line.replace(r'\\', "\\")
