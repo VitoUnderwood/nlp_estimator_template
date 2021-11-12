@@ -33,7 +33,8 @@ class NMTConfig(object):
 
 
 class NMT(object):
-    def __init__(self, config, input_ids, output_ids, batch_size, pad=0, unk=1, end=2, start=3):
+    def __init__(self, config, input_ids, output_ids, batch_size, beam_width, max_gen_len, mode, pad=0, unk=1,
+                 end_token=2, start_token=3):
         """
         描述模型图结构
         :param config: 存放模型结构相关的参数
@@ -44,7 +45,7 @@ class NMT(object):
             # [batch_size, max_seq_length, embed_size]
             inp_embed = tf.nn.embedding_lookup(word_embedding, input_ids)
 
-            start_tokens = tf.tile([start], [batch_size])
+            start_tokens = tf.tile([start_token], [batch_size])
             # 开头添加go，构造teacher forcing的输入
             teacher_input_ids = tf.concat([tf.expand_dims(start_tokens, 1), output_ids], 1)
             teacher_input_embed = tf.nn.embedding_lookup(word_embedding, teacher_input_ids)
@@ -72,55 +73,78 @@ class NMT(object):
             # helper decoder dynamic_decode 配合使用
             # tf.contrib.seq2seq.TrainingHelper(inputs, sequence_length)
             # here use teacher forcing, the output as decoder's input, [batch_size, seq_len]，[EOS] id is 2
-            teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, 2)), 1)
-            train_helper = tf.contrib.seq2seq.TrainingHelper(teacher_input_embed, teacher_input_lengths)
-
-            # tf.contrib.seq2seq.BasicDecoder(cell, helper, initial_state, output_layer=None)
-
             decoder_hidden_size = 2 * config.hidden_size
-
             cell = tf.contrib.rnn.GRUCell(num_units=decoder_hidden_size)
-
+            projection = tf.layers.Dense(config.vocab_size)
             input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(input_ids, 2)), 1)
+            if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
+                teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, 2)), 1)
 
-            attention_mechanism = tf.contrib.seq2seq.LuongAttention(num_units=decoder_hidden_size,
-                                                                    memory=encoder_outputs,
-                                                                    memory_sequence_length=input_lengths)
+                train_helper = tf.contrib.seq2seq.TrainingHelper(teacher_input_embed, teacher_input_lengths)
 
-            attn_cell = tf.contrib.seq2seq.AttentionWrapper(cell, attention_mechanism,
-                                                            attention_layer_size=decoder_hidden_size)
+                attention_mechanism = tf.contrib.seq2seq.LuongAttention(num_units=decoder_hidden_size,
+                                                                        memory=encoder_outputs,
+                                                                        memory_sequence_length=input_lengths)
 
-            out_cell = tf.contrib.rnn.OutputProjectionWrapper(attn_cell, config.vocab_size)
+                attn_cell = tf.contrib.seq2seq.AttentionWrapper(cell, attention_mechanism,
+                                                                attention_layer_size=decoder_hidden_size)
 
-            basic_decoder = tf.contrib.seq2seq.BasicDecoder(
-                out_cell,
-                train_helper,
-                initial_state=out_cell.zero_state(dtype=tf.float32,
-                                                  batch_size=batch_size).clone(cell_state=encoder_final_state))
+                decoder_init_state = attn_cell.zero_state(dtype=tf.float32,
+                                                          batch_size=batch_size).clone(cell_state=encoder_final_state)
 
-            output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=basic_decoder,
-                                                             impute_finished=True,
-                                                             output_max_length=20)
+                basic_decoder = tf.contrib.seq2seq.BasicDecoder(
+                    attn_cell,
+                    train_helper,
+                    initial_state=decoder_init_state,
+                    output_layer=projection)
 
-            tf.logging.info("=========================================================================================")
-            tf.logging.info(f"input_ids shape {input_ids.shape}")
-            tf.logging.info(f"output_ids shape {output_ids.shape}")
-            tf.logging.info(f"output shape {output.rnn_output.shape}")
+                output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=basic_decoder,
+                                                                 maximum_iterations=max_gen_len)
 
-            logits = output.rnn_output
+                # tf.logging.info("=========================================================================================")
+                # tf.logging.info(f"input_ids shape {input_ids.shape}")
+                # tf.logging.info(f"output_ids shape {output_ids.shape}")
+                # tf.logging.info(f"output shape {output.rnn_output.shape}")
 
-            cali_output_ids = output_ids[:, :tf.shape(logits)[1]]
+                self.logits = output.rnn_output
+                cali_output_ids = output_ids[:, :tf.shape(self.logits)[1]]
+                # weights is mask for loss
+                weights = tf.to_float(tf.not_equal(cali_output_ids, 2))
 
-            # weights is mask for loss
-            weights = tf.to_float(tf.not_equal(cali_output_ids, 2))
+                # 这里必需要让两个tensor的形状一样，但是在output_id的长度并不是当前batch的数据的最大长度，而是实现预定的max_seq_len
+                self.loss = tf.contrib.seq2seq.sequence_loss(self.logits, cali_output_ids, weights=weights)
+                # self.loss = tf.reduce_sum(
+                #     tf.nn.sparse_softmax_cross_entropy_with_logits(
+                #         labels=cali_output_ids,
+                #         logits=logits
+                #     )
+                # ) / batch_size
 
-            # 这里必需要让两个tensor的形状一样，但是在output_id的长度并不是当前batch的数据的最大长度，而是实现预定的max_seq_len
-            self.loss = tf.contrib.seq2seq.sequence_loss(
-                logits, cali_output_ids, weights=weights)
+            if mode == tf.estimator.ModeKeys.PREDICT:
+                encoder_outputs = tf.contrib.seq2seq.tile_batch(encoder_outputs, multiplier=beam_width)
+                encoder_final_state = tf.contrib.seq2seq.tile_batch(encoder_final_state, multiplier=beam_width)
+                input_lengths = tf.contrib.seq2seq.tile_batch(input_lengths, multiplier=beam_width)
 
-            # self.loss = tf.reduce_sum(
-            #     tf.nn.sparse_softmax_cross_entropy_with_logits(
-            #         labels=cali_output_ids,
-            #         logits=logits
-            #     )
-            # ) / batch_size
+                attention_mechanism = tf.contrib.seq2seq.LuongAttention(num_units=decoder_hidden_size,
+                                                                        memory=encoder_outputs,
+                                                                        memory_sequence_length=input_lengths)
+
+                attn_cell = tf.contrib.seq2seq.AttentionWrapper(cell, attention_mechanism,
+                                                                attention_layer_size=decoder_hidden_size)
+
+                decoder_initial_state = attn_cell.zero_state(dtype=tf.float32,
+                                                             batch_size=batch_size * beam_width).clone(
+                    cell_state=encoder_final_state)
+
+                beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(attn_cell,
+                                                                    word_embedding,
+                                                                    start_tokens,
+                                                                    end_token,
+                                                                    decoder_initial_state,
+                                                                    beam_width=beam_width,
+                                                                    output_layer=projection)
+
+                output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=beam_decoder,
+                                                                 maximum_iterations=max_gen_len)
+
+                self.predictions = output.predicted_ids

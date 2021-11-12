@@ -1,6 +1,7 @@
 # coding=utf-8
 import collections
 import re
+
 import tensorflow as tf
 
 
@@ -22,6 +23,27 @@ def get_rnn_cell(rnn_type, num_layers, hidden_size, keep_prob, scope):
         else:
             res = lst[0]
         return res
+
+
+def get_out_put_from_tokens(all_sentences, rev_vocab):
+    all_string_sent = []
+    for each_sent in all_sentences:
+        string_sent = []
+        for each_word in each_sent:
+            string_sent.append(rev_vocab.get(each_word))
+        all_string_sent.append(' '.join(string_sent))
+    return all_string_sent
+
+
+def get_out_put_from_tokens_beam_search(all_sentences, rev_vocab):
+    all_string_sent = []
+    for each_sent in all_sentences:
+        each_sent = each_sent[:, 0]
+        string_sent = []
+        for each_word in each_sent:
+            string_sent.append(rev_vocab.get(each_word))
+        all_string_sent.append(' '.join(string_sent))
+    return all_string_sent
 
 
 def get_assignment_map_from_checkpoint(tvars, init_checkpoint):

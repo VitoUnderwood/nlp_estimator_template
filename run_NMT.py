@@ -4,11 +4,11 @@ import collections
 import csv
 import os
 
-import numpy as np
 import tensorflow as tf
 
-from models.bert import tokenization
 from models.NMT import modeling
+from models.bert import tokenization
+from models.model_utils import get_out_put_from_tokens_beam_search, get_out_put_from_tokens
 
 try:
     from tensorflow.python.util import module_wrapper as deprecation
@@ -44,9 +44,9 @@ flags.DEFINE_string(
     "The output directory where the model checkpoints will be written.")
 
 # Other parameters
-flags.DEFINE_string(
-    "init_checkpoint", None,
-    "Initial checkpoint (usually from a pre-trained BERT model).")
+flags.DEFINE_integer(
+    "beam_width", 5,
+    "beam search parameter which control the search window size K")
 
 flags.DEFINE_bool(
     "do_lower_case", True,
@@ -67,9 +67,9 @@ flags.DEFINE_bool("do_predict", False, "Whether to run the model in inference mo
 
 flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
 
-flags.DEFINE_integer("eval_batch_size", 8, "Total batch size for eval.")
+flags.DEFINE_integer("eval_batch_size", 32, "Total batch size for eval.")
 
-flags.DEFINE_integer("predict_batch_size", 8, "Total batch size for predict.")
+flags.DEFINE_integer("predict_batch_size", 32, "Total batch size for predict.")
 
 flags.DEFINE_float("learning_rate", 5e-5, "The initial learning rate for Adam.")
 
@@ -127,13 +127,9 @@ class InputFeatures(object):
 
     def __init__(self,
                  input_ids,
-                 input_mask,
-                 output_ids,
-                 output_mask):
+                 output_ids):
         self.input_ids = input_ids
-        self.input_mask = input_mask
         self.output_ids = output_ids
-        self.output_mask = output_mask
 
 
 class DataProcessor(object):
@@ -255,9 +251,7 @@ def convert_single_example(example, max_seq_length, tokenizer):
 
     feature = InputFeatures(
         input_ids=input_ids,
-        input_mask=input_mask,
-        output_ids=output_ids,
-        output_mask=output_mask)
+        output_ids=output_ids)
     return feature
 
 
@@ -294,7 +288,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
     :param input_file: tf.record 的文件路径
     :param seq_length:
     :param is_training:
-    :param drop_remainder:
+    :param drop_remainder: 是否保留最后一个不完整的batch
     :return:
     """
 
@@ -317,7 +311,6 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
 
     def input_fn(params):
         """The actual input function."""
-        batch_size = params["batch_size"]
         # For training, we want a lot of parallel reading and shuffling.
         # For eval, we want no shuffling and parallel reading doesn't matter.
         d = tf.data.TFRecordDataset(input_file)
@@ -328,7 +321,7 @@ def file_based_input_fn_builder(input_file, seq_length, is_training,
         d = d.apply(
             tf.contrib.data.map_and_batch(
                 lambda record: _decode_record(record, name_to_features),
-                batch_size=batch_size,
+                batch_size=params["batch_size"],
                 drop_remainder=drop_remainder))
 
         return d
@@ -425,17 +418,27 @@ def model_fn_builder(model_config, learning_rate):
         input_ids = features["input_ids"]
         output_ids = features["output_ids"]
 
-        is_training = (mode == tf.estimator.ModeKeys.TRAIN)
-        if not is_training:
+        if not mode == tf.estimator.ModeKeys.TRAIN:
             model_config.keep_prob = 1
 
-        model = modeling.NMT(model_config, input_ids, output_ids, batch_size=params["batch_size"])
+        model = modeling.NMT(model_config, input_ids, output_ids,
+                             beam_width=FLAGS.beam_width,
+                             batch_size=params["batch_size"],
+                             max_gen_len=FLAGS.max_gen_len,
+                             mode=mode)
 
         # for train and eval
-        loss = model.loss
-        # only for train
-        train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,
-                                                                                global_step=tf.train.get_global_step())
+        if (mode == tf.estimator.ModeKeys.TRAIN or
+                mode == tf.estimator.ModeKeys.EVAL):
+            loss = model.loss
+        else:
+            loss = None
+
+        if mode == tf.estimator.ModeKeys.TRAIN:
+            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,
+                                                                                    global_step=tf.train.get_global_step())
+        else:
+            train_op = None
 
         # only for eval
         # def metric_fn(per_example_loss, label_ids, logits):
@@ -452,7 +455,10 @@ def model_fn_builder(model_config, learning_rate):
         # eval_metrics = metric_fn(per_example_loss, label_ids, logits)
 
         # only for predict
-        predictions = None
+        if mode == tf.estimator.ModeKeys.PREDICT:
+            predictions = model.predictions
+        else:
+            predictions = None
 
         return tf.estimator.EstimatorSpec(
             mode=mode,
@@ -475,8 +481,6 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
 
     def input_fn(params):
         """The actual input function."""
-        batch_size = params["batch_size"]
-
         num_examples = len(features)
 
         # This is for demo purposes and does NOT scale to large data sets. We do
@@ -496,9 +500,9 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
 
         if is_training:
             d = d.repeat()
-            d = d.shuffle(buffer_size=100)
+            d = d.shuffle(buffer_size=10000)
 
-        d = d.batch(batch_size=batch_size, drop_remainder=drop_remainder)
+        d = d.batch(batch_size=params["batch_size"], drop_remainder=drop_remainder)
         return d
 
     return input_fn
@@ -515,8 +519,6 @@ def main(_):
 
     processor = NMTProcessor()
 
-    label_list = processor.get_labels()
-
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
@@ -525,8 +527,13 @@ def main(_):
         learning_rate=FLAGS.learning_rate)
 
     # 普通的Estimator
+
+    if FLAGS.do_train:
+        batch_size = FLAGS.train_batch_size
+    else:
+        batch_size = FLAGS.predict_batch_size
     params = {
-        'batch_size': FLAGS.train_batch_size
+        'batch_size': batch_size
     }
 
     # 定义模型save的频率，路径
@@ -580,8 +587,8 @@ def main(_):
         eval_input_fn = file_based_input_fn_builder(
             input_file=eval_file,
             seq_length=FLAGS.max_seq_length,
-            is_training=False,
-            drop_remainder=False)
+            is_training=True,
+            drop_remainder=True)
 
         # early stop hook
         early_stopping_hook = tf.estimator.experimental.stop_if_no_decrease_hook(estimator,
@@ -612,9 +619,10 @@ def main(_):
         num_actual_predict_examples = len(predict_examples)
 
         predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
-        file_based_convert_examples_to_features(predict_examples,
-                                                FLAGS.max_seq_length, tokenizer,
-                                                predict_file)
+        if not tf.gfile.Exists(predict_file):
+            file_based_convert_examples_to_features(predict_examples,
+                                                    FLAGS.max_seq_length, tokenizer,
+                                                    predict_file)
 
         tf.logging.info("***** Running prediction*****")
         tf.logging.info("  Num examples = %d (%d actual, %d padding)",
@@ -626,26 +634,18 @@ def main(_):
             input_file=predict_file,
             seq_length=FLAGS.max_seq_length,
             is_training=False,
-            drop_remainder=False)
+            drop_remainder=True)
 
         result = estimator.predict(input_fn=predict_input_fn)
+        if FLAGS.beam_width > 1:
+            final_answer = get_out_put_from_tokens_beam_search(result, tokenizer.inv_vocab)
+        else:
+            final_answer = get_out_put_from_tokens(result, tokenizer.inv_vocab)
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
-
-        label_i2w = {idx: word for idx, word in enumerate(label_list)}
         with tf.gfile.GFile(output_predict_file, "w") as writer:
-            num_written_lines = 0
-            tf.logging.info("***** Predict results *****")
-            for (i, prediction) in enumerate(result):
-                probabilities = prediction["probabilities"]
-                if i >= num_actual_predict_examples:
-                    break
-                output_line = "\t".join(str(class_probability) for class_probability in probabilities)
-                max_pro_id = np.argmax(probabilities)
-                output_line = "\t" + output_line + label_i2w[max_pro_id] + "\n"
-                writer.write(output_line)
-                num_written_lines += 1
-        assert num_written_lines == num_actual_predict_examples
+            for each_answer in final_answer:
+                writer.write(each_answer+"\n")
 
 
 if __name__ == "__main__":
