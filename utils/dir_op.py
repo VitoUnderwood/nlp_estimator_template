@@ -1,6 +1,7 @@
 # -*- coding:utf-8 -*-
 import os
 
+
 def listdir_without_hidden_dir(path):
     dir_list = os.listdir(path)
     without_hidden_dir_list = []

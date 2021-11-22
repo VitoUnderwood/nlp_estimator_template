@@ -1,0 +1,3 @@
+# -*- coding:utf-8 -*-
+def load_word2vec(model_dir):
+    ...
