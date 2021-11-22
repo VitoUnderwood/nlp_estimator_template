@@ -17,38 +17,38 @@
 # # es.evaluate()
 # # es.predict()
 # # es.export_savedmodel
-import json
-
-import requests
-
-tmp = [1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545,
-       1, 442, 5562, 2, 545]
-
-input_ids = []
-
-for _ in range(32):
-    input_ids.append(tmp)
-
-output_ids = input_ids
-
-data = {"instances": [
-    {
-        "input_ids": input_ids,
-        "output_ids": output_ids
-    }
-]
-}
-param = json.dumps(data)
-res = requests.post('http://localhost:8501/v1/models/QA:predict', data=param)
-print(res.text)
+# import json
+#
+# import requests
+#
+# tmp = [1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545,
+#        1, 442, 5562, 2, 545]
+#
+# input_ids = []
+#
+# for _ in range(32):
+#     input_ids.append(tmp)
+#
+# output_ids = input_ids
+#
+# data = {"instances": [
+#     {
+#         "input_ids": input_ids,
+#         "output_ids": output_ids
+#     }
+# ]
+# }
+# param = json.dumps(data)
+# res = requests.post('http://localhost:8501/v1/models/QA:predict', data=param)
+# print(res.text)
 
 # import tensorflow as tf
 #
@@ -81,3 +81,10 @@ print(res.text)
 # })
 # print(prediction)
 # # eval_logits = prediction["logits"]
+
+from gensim.models import Word2Vec
+model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
+model.vocabulary
+# numpy vector of a word
+vector = model.wv["中国"]
+print(vector)
