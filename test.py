@@ -17,38 +17,42 @@
 # # es.evaluate()
 # # es.predict()
 # # es.export_savedmodel
-# import json
-#
-# import requests
-#
-# tmp = [1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545]
-#
-# input_ids = []
-#
-# for _ in range(32):
-#     input_ids.append(tmp)
-#
-# output_ids = input_ids
-#
-# data = {"instances": [
-#     {
-#         "input_ids": input_ids,
-#         "output_ids": output_ids
-#     }
-# ]
+import json
+
+import requests
+
+tmp = [1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545,
+       1, 442, 5562, 2, 545]
+
+input_ids = []
+
+for _ in range(16):
+    input_ids.append(tmp)
+
+output_ids = input_ids
+
+data = {"instances": [
+    {
+        "input_ids": tmp,
+        "output_ids": tmp
+    }
+]
+}
+# data = {"instances": [5, 7, 9]
 # }
-# param = json.dumps(data)
-# res = requests.post('http://localhost:8501/v1/models/QA:predict', data=param)
-# print(res.text)
+
+param = json.dumps(data)
+# res = requests.post('http://localhost:8502/v1/models/half_plus_two:predict', data=param)
+res = requests.post('http://192.168.140.158:8501/v1/models/QA:predict', data=param)
+print(res.text)
 
 # import tensorflow as tf
 #
@@ -65,12 +69,12 @@
 #
 # input_ids = []
 #
-# for _ in range(32):
+# for _ in range(4):
 #     input_ids.append(tmp)
 #
 # output_ids = input_ids
 #
-# MODEL_DIR = "checkpoints/QA_CVAE/save_demo/1637320913"
+# MODEL_DIR = "checkpoints/QA_CVAE/1637496879"
 #
 # predict_fn = tf.contrib.predictor.from_saved_model(MODEL_DIR)
 #
@@ -80,11 +84,11 @@
 #     "output_ids": output_ids,
 # })
 # print(prediction)
-# # eval_logits = prediction["logits"]
+# eval_logits = prediction["logits"]
 
-from gensim.models import Word2Vec
-model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
-model.vocabulary
-# numpy vector of a word
-vector = model.wv["中国"]
-print(vector)
+# from gensim.models import Word2Vec
+# model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
+# model.vocabulary
+# # numpy vector of a word
+# vector = model.wv["中国"]
+# print(vector)

@@ -33,8 +33,8 @@ class ModelConfig(object):
 
 
 class QA_CVAE(object):
-    def __init__(self, config, input_ids, output_ids, beam_width, maximum_iterations, mode, pad=0, unk=1,
-                 end_token=2, start_token=3):
+    def __init__(self, config, input_ids, output_ids, beam_width, maximum_iterations, mode, word_vectors=None, pad=0,
+                 unk=1, end_token=2, start_token=3):
         """
         描述模型图结构
         :param config: 存放模型结构相关的参数
@@ -47,7 +47,12 @@ class QA_CVAE(object):
 
         with tf.variable_scope("embedding"):
             # 这里输入和输出有相同的重叠的部分，所以共享，否则只会增加softmax的计算量
-            word_embedding = tf.get_variable("word_embedding", shape=[config.vocab_size, config.embed_size])
+            if word_vectors is None:
+                word_embedding = tf.get_variable("word_embedding", shape=[config.vocab_size, config.embed_size])
+            else:
+                word_embedding = tf.get_variable("word_embedding", dtype=tf.float32,
+                                                 initializer=tf.constant(word_vectors, dtype=tf.float32))
+
             # [batch_size, max_seq_length, embed_size]
             input_embed = tf.nn.embedding_lookup(word_embedding, input_ids)
             output_embed = tf.nn.embedding_lookup(word_embedding, output_ids)

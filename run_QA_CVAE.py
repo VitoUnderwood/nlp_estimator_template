@@ -5,6 +5,7 @@ import csv
 import os
 
 import tensorflow as tf
+from gensim.models import Word2Vec
 
 from models.QA_CVAE import modeling
 from models.bert import tokenization
@@ -42,6 +43,10 @@ flags.DEFINE_string("vocab_file", None,
 flags.DEFINE_string(
     "output_dir", None,
     "The output directory where the model checkpoints will be written.")
+
+flags.DEFINE_string(
+    "word2vec_dir", None,
+    "The directory where the word2vec model was saved.")
 
 # Other parameters
 flags.DEFINE_integer(
@@ -339,9 +344,10 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_b.pop()
 
 
-def model_fn_builder(model_config, learning_rate):
+def model_fn_builder(model_config, learning_rate, word_vectors=None):
     """
     包装model_fn，传入额外的参数
+    :param word_vectors: 用于初始化embedding层
     :param learning_rate: 控制优化器
     :param model_config: 用户自定义的模型性参数，区分model fn的config，是run config函数，参数固定，所以
     需要额外的config，模型参数用于创建模型
@@ -417,7 +423,8 @@ def model_fn_builder(model_config, learning_rate):
         model = modeling.QA_CVAE(model_config, input_ids, output_ids,
                                  beam_width=FLAGS.beam_width,
                                  maximum_iterations=FLAGS.maximum_iterations,
-                                 mode=mode)
+                                 mode=mode,
+                                 word_vectors=word_vectors)
 
         # for train and eval
         if (mode == tf.estimator.ModeKeys.TRAIN or
@@ -503,11 +510,12 @@ def input_fn_builder(features, seq_length, is_training, drop_remainder):
 def serving_input_fn():
     input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='input_ids')
     output_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='output_ids')
-    input_fn = tf.estimator.export.build_raw_serving_input_receiver_fn({
+    features = {
         'input_ids': input_ids,
-        'output_ids': output_ids,
-    })()
-    return input_fn
+        'output_ids': output_ids
+    }
+
+    return tf.estimator.export.build_raw_serving_input_receiver_fn(features)()
 
 
 def main(_):
@@ -521,12 +529,16 @@ def main(_):
 
     processor = Processor()
 
+    word2vec_model = Word2Vec.load(FLAGS.word2vec_dir)
+    word_vectors = word2vec_model.wv.vectors
+
     tokenizer = tokenization.FullTokenizer(
         vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
     model_fn = model_fn_builder(
         model_config=model_config,
-        learning_rate=FLAGS.learning_rate)
+        learning_rate=FLAGS.learning_rate,
+        word_vectors=word_vectors)
 
     # 普通的Estimator
 
@@ -613,7 +625,7 @@ def main(_):
         #         writer.write("%s = %s\n" % (key, str(result[key])))
 
         # save model for tensorflow service
-        estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
+    estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
 
     if FLAGS.do_predict:
         predict_examples = processor.get_test_examples(FLAGS.data_dir)

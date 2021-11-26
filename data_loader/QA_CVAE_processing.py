@@ -8,7 +8,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-sys.path.append("/Users/vito/PyCharmProjects/nlp_estimator_template")
+sys.path.append("../")
 
 from utils import dir_op
 
