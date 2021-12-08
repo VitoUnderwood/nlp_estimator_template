@@ -5,6 +5,7 @@ import logging
 import os.path
 
 from gensim.models import Word2Vec
+import numpy as np
 
 from utils.dir_op import create_dirs
 
@@ -30,11 +31,7 @@ def train(args):
                      size=args.vector_size,
                      min_count=args.min_count)
 
-    # model.save(f"{args.output_dir}word2vec_{args.vector_size}.model")
-    model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
-    model.wv.index2word()
     model.save(os.path.join(args.output_dir, args.word2vec_name))
-    # model.wv.save_word2vec_format(args.output_dir + args.wordvec_name)
 
 
 def get_args():

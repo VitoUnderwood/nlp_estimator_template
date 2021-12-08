@@ -159,7 +159,9 @@ class QA_CVAE(object):
 
                 with tf.variable_scope("loss"):
                     # ELBO
+                    kl_weight = tf.minimum(1.0, tf.to_float(tf.train.get_global_step()) / config.kl_annealing_step)
                     kl_divergence = self.kl_divergence(prior_mu, prior_log_sigma, post_mu, post_log_sigma)
+                    anneal_kl_divergence = kl_weight * kl_divergence
 
                     logits = output.rnn_output
                     cali_output_ids = output_ids[:, :tf.shape(logits)[1]]

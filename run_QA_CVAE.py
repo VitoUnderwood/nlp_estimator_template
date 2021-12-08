@@ -3,9 +3,10 @@
 import collections
 import csv
 import os
+import pickle
 
+import jieba
 import tensorflow as tf
-from gensim.models import Word2Vec
 
 from models.QA_CVAE import modeling
 from models.bert import tokenization
@@ -45,7 +46,7 @@ flags.DEFINE_string(
     "The output directory where the model checkpoints will be written.")
 
 flags.DEFINE_string(
-    "word2vec_dir", None,
+    "word2vec_file", None,
     "The directory where the word2vec model was saved.")
 
 # Other parameters
@@ -223,26 +224,38 @@ def convert_single_example(example, max_seq_length, tokenizer):
     if len(tokens_b) > max_seq_length - 1:
         tokens_b = tokens_b[0:(max_seq_length - 1)]
 
+
+def convert_single_example_2(example, max_seq_length, word2id):
+    """Converts a single `InputExample` into a single `InputFeatures`."""
+    tokens_a = list(jieba.cut(example.text_a))
+    tokens_b = list(jieba.cut(example.text_b))
+
+    if len(tokens_a) > max_seq_length - 1:
+        tokens_a = tokens_a[0:max_seq_length-1]
+
+    if len(tokens_b) > max_seq_length - 1:
+        tokens_b = tokens_b[0:max_seq_length-1]
+
     # [PAD] 0 [S] 1 [E] 2
     # 由于做的是nlg，所以go用作第一个输入的token，在decode阶段需要使用，但是encode不需要
     input_tokens = []
     for token in tokens_a:
         input_tokens.append(token)
-    input_tokens.append("[E]")
+    input_tokens.append("<E>")
 
     output_tokens = []
     for token in tokens_b:
         output_tokens.append(token)
-    output_tokens.append("[E]")
+    output_tokens.append("<E>")
 
-    input_ids = tokenizer.convert_tokens_to_ids(input_tokens)
-    output_ids = tokenizer.convert_tokens_to_ids(output_tokens)
+    input_ids = [word2id.get(word, word2id["<UNK>"]) for word in input_tokens]
+    output_ids = [word2id.get(word, word2id["<UNK>"]) for word in output_tokens]
 
     while len(input_ids) < max_seq_length:
-        input_ids.append(2)
+        input_ids.append(word2id["<E>"])
 
     while len(output_ids) < max_seq_length:
-        output_ids.append(2)
+        output_ids.append(word2id["<E>"])
 
     assert len(input_ids) == max_seq_length
     assert len(output_ids) == max_seq_length
@@ -253,7 +266,7 @@ def convert_single_example(example, max_seq_length, tokenizer):
     return feature
 
 
-def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer, output_file):
+def file_based_convert_examples_to_features(examples, max_seq_length, word2id, output_file):
     """Convert a set of `InputExample`s to a TFRecord file.
     将输入和输出融和到一起构造模型的input features
     """
@@ -264,7 +277,7 @@ def file_based_convert_examples_to_features(examples, max_seq_length, tokenizer,
         if ex_index % 10000 == 0:
             tf.logging.info(f"Writing example {ex_index} of {len(examples)} for {output_file}")
 
-        feature = convert_single_example(example, max_seq_length, tokenizer)
+        feature = convert_single_example_2(example, max_seq_length, word2id)
 
         def create_int_feature(values):
             f = tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
@@ -529,16 +542,18 @@ def main(_):
 
     processor = Processor()
 
-    word2vec_model = Word2Vec.load(FLAGS.word2vec_dir)
-    word_vectors = word2vec_model.wv.vectors
+    tf.logging.info("load vocabulary ........")
+    id2word = pickle.load(open(FLAGS.vocab_file, "rb"))
+    id2vec = pickle.load(open(FLAGS.word2vec_file, "rb"))
+    word2id = dict(zip(id2word, range(len(id2word))))
 
-    tokenizer = tokenization.FullTokenizer(
-        vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
+    # tokenizer = tokenization.FullTokenizer(
+    #     vocab_file=FLAGS.vocab_file, do_lower_case=FLAGS.do_lower_case)
 
     model_fn = model_fn_builder(
         model_config=model_config,
         learning_rate=FLAGS.learning_rate,
-        word_vectors=word_vectors)
+        word_vectors=id2vec)
 
     # 普通的Estimator
 
@@ -573,10 +588,10 @@ def main(_):
 
         if not tf.gfile.Exists(train_file):
             file_based_convert_examples_to_features(
-                train_examples, FLAGS.max_seq_length, tokenizer, train_file)
+                train_examples, FLAGS.max_seq_length, word2id, train_file)
         if not tf.gfile.Exists(eval_file):
             file_based_convert_examples_to_features(
-                eval_examples, FLAGS.max_seq_length, tokenizer, eval_file)
+                eval_examples, FLAGS.max_seq_length, word2id, eval_file)
 
         tf.logging.info("***** Running training *****")
         tf.logging.info("  Num examples = %d", len(train_examples))
@@ -634,7 +649,8 @@ def main(_):
         predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
         if not tf.gfile.Exists(predict_file):
             file_based_convert_examples_to_features(predict_examples,
-                                                    FLAGS.max_seq_length, tokenizer,
+                                                    FLAGS.max_seq_length,
+                                                    word2id,
                                                     predict_file)
 
         tf.logging.info("***** Running prediction*****")
@@ -651,9 +667,9 @@ def main(_):
 
         result = estimator.predict(input_fn=predict_input_fn)
         if FLAGS.beam_width > 1:
-            final_answer = get_out_put_from_tokens_beam_search(result, tokenizer.inv_vocab)
+            final_answer = get_out_put_from_tokens_beam_search(result, id2word)
         else:
-            final_answer = get_out_put_from_tokens(result, tokenizer.inv_vocab)
+            final_answer = get_out_put_from_tokens(result, id2word)
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
         with tf.gfile.GFile(output_predict_file, "w") as writer:
