@@ -1,0 +1,103 @@
+2021-12-16 10:40:57,823 : INFO : collecting all words and their counts
+2021-12-16 10:40:57,824 : INFO : PROGRESS: at sentence #0, processed 0 words, keeping 0 word types
+2021-12-16 10:40:58,017 : INFO : PROGRESS: at sentence #10000, processed 666490 words, keeping 12871 word types
+2021-12-16 10:40:58,203 : INFO : PROGRESS: at sentence #20000, processed 1331407 words, keeping 15306 word types
+2021-12-16 10:40:58,395 : INFO : PROGRESS: at sentence #30000, processed 1997412 words, keeping 16400 word types
+2021-12-16 10:40:58,587 : INFO : PROGRESS: at sentence #40000, processed 2660944 words, keeping 16946 word types
+2021-12-16 10:40:58,773 : INFO : PROGRESS: at sentence #50000, processed 3324740 words, keeping 17229 word types
+2021-12-16 10:40:58,959 : INFO : PROGRESS: at sentence #60000, processed 3986684 words, keeping 17378 word types
+2021-12-16 10:40:59,152 : INFO : PROGRESS: at sentence #70000, processed 4649740 words, keeping 17437 word types
+2021-12-16 10:40:59,330 : INFO : PROGRESS: at sentence #80000, processed 5314009 words, keeping 17469 word types
+2021-12-16 10:40:59,531 : INFO : PROGRESS: at sentence #90000, processed 5975212 words, keeping 17476 word types
+2021-12-16 10:40:59,737 : INFO : PROGRESS: at sentence #100000, processed 6641406 words, keeping 17482 word types
+2021-12-16 10:40:59,952 : INFO : PROGRESS: at sentence #110000, processed 7307068 words, keeping 17483 word types
+2021-12-16 10:41:00,056 : INFO : collected 17483 word types from a corpus of 7682507 raw words and 115669 sentences
+2021-12-16 10:41:00,056 : INFO : Loading a fresh vocabulary
+2021-12-16 10:41:00,076 : INFO : effective_min_count=1 retains 17483 unique words (100% of original 17483, drops 0)
+2021-12-16 10:41:00,076 : INFO : effective_min_count=1 leaves 7682507 word corpus (100% of original 7682507, drops 0)
+2021-12-16 10:41:00,103 : INFO : deleting the raw counts dictionary of 17483 items
+2021-12-16 10:41:00,103 : INFO : sample=0.001 downsamples 45 most-common words
+2021-12-16 10:41:00,103 : INFO : downsampling leaves estimated 5658699 word corpus (73.7% of prior 7682507)
+2021-12-16 10:41:00,125 : INFO : estimated required memory for 17483 words and 300 dimensions: 50700700 bytes
+2021-12-16 10:41:00,125 : INFO : resetting layer weights
+2021-12-16 10:41:00,321 : INFO : training model with 3 workers on 17483 vocabulary and 300 features, using sg=0 hs=0 sample=0.001 negative=5 window=5
+2021-12-16 10:41:01,330 : INFO : EPOCH 1 - PROGRESS: at 15.53% examples, 874560 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:02,334 : INFO : EPOCH 1 - PROGRESS: at 31.71% examples, 893613 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:03,338 : INFO : EPOCH 1 - PROGRESS: at 49.28% examples, 925145 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:04,339 : INFO : EPOCH 1 - PROGRESS: at 67.44% examples, 950007 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:05,348 : INFO : EPOCH 1 - PROGRESS: at 86.27% examples, 971131 words/s, in_qsize 6, out_qsize 0
+2021-12-16 10:41:06,057 : INFO : worker thread finished; awaiting finish of 2 more threads
+2021-12-16 10:41:06,062 : INFO : worker thread finished; awaiting finish of 1 more threads
+2021-12-16 10:41:06,064 : INFO : worker thread finished; awaiting finish of 0 more threads
+2021-12-16 10:41:06,064 : INFO : EPOCH - 1 : training on 7682507 raw words (5657430 effective words) took 5.7s, 985256 effective words/s
+2021-12-16 10:41:07,068 : INFO : EPOCH 2 - PROGRESS: at 18.39% examples, 1039145 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:08,068 : INFO : EPOCH 2 - PROGRESS: at 37.05% examples, 1048033 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:09,076 : INFO : EPOCH 2 - PROGRESS: at 55.91% examples, 1050844 words/s, in_qsize 6, out_qsize 0
+2021-12-16 10:41:10,080 : INFO : EPOCH 2 - PROGRESS: at 74.47% examples, 1049433 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:11,087 : INFO : EPOCH 2 - PROGRESS: at 93.25% examples, 1051014 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:11,467 : INFO : worker thread finished; awaiting finish of 2 more threads
+2021-12-16 10:41:11,475 : INFO : worker thread finished; awaiting finish of 1 more threads
+2021-12-16 10:41:11,477 : INFO : worker thread finished; awaiting finish of 0 more threads
+2021-12-16 10:41:11,477 : INFO : EPOCH - 2 : training on 7682507 raw words (5658518 effective words) took 5.4s, 1045545 effective words/s
+2021-12-16 10:41:12,481 : INFO : EPOCH 3 - PROGRESS: at 16.69% examples, 944786 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:13,485 : INFO : EPOCH 3 - PROGRESS: at 32.23% examples, 910755 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:14,492 : INFO : EPOCH 3 - PROGRESS: at 48.76% examples, 915916 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:15,492 : INFO : EPOCH 3 - PROGRESS: at 65.63% examples, 925393 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:16,493 : INFO : EPOCH 3 - PROGRESS: at 81.10% examples, 914966 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:17,495 : INFO : EPOCH 3 - PROGRESS: at 98.85% examples, 929613 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:17,543 : INFO : worker thread finished; awaiting finish of 2 more threads
+2021-12-16 10:41:17,550 : INFO : worker thread finished; awaiting finish of 1 more threads
+2021-12-16 10:41:17,555 : INFO : worker thread finished; awaiting finish of 0 more threads
+2021-12-16 10:41:17,555 : INFO : EPOCH - 3 : training on 7682507 raw words (5658685 effective words) took 6.1s, 931116 effective words/s
+2021-12-16 10:41:18,563 : INFO : EPOCH 4 - PROGRESS: at 17.86% examples, 1006668 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:19,568 : INFO : EPOCH 4 - PROGRESS: at 35.89% examples, 1011226 words/s, in_qsize 6, out_qsize 0
+2021-12-16 10:41:20,573 : INFO : EPOCH 4 - PROGRESS: at 53.68% examples, 1007493 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:21,578 : INFO : EPOCH 4 - PROGRESS: at 69.14% examples, 972880 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:22,581 : INFO : EPOCH 4 - PROGRESS: at 86.40% examples, 973016 words/s, in_qsize 6, out_qsize 0
+2021-12-16 10:41:23,457 : INFO : worker thread finished; awaiting finish of 2 more threads
+2021-12-16 10:41:23,460 : INFO : worker thread finished; awaiting finish of 1 more threads
+2021-12-16 10:41:23,465 : INFO : worker thread finished; awaiting finish of 0 more threads
+2021-12-16 10:41:23,465 : INFO : EPOCH - 4 : training on 7682507 raw words (5658932 effective words) took 5.9s, 957694 effective words/s
+2021-12-16 10:41:24,473 : INFO : EPOCH 5 - PROGRESS: at 14.10% examples, 795237 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:25,474 : INFO : EPOCH 5 - PROGRESS: at 28.73% examples, 811699 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:26,476 : INFO : EPOCH 5 - PROGRESS: at 44.84% examples, 844007 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:27,480 : INFO : EPOCH 5 - PROGRESS: at 61.61% examples, 868644 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:28,486 : INFO : EPOCH 5 - PROGRESS: at 76.70% examples, 864196 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:29,491 : INFO : EPOCH 5 - PROGRESS: at 93.64% examples, 879639 words/s, in_qsize 5, out_qsize 0
+2021-12-16 10:41:29,843 : INFO : worker thread finished; awaiting finish of 2 more threads
+2021-12-16 10:41:29,848 : INFO : worker thread finished; awaiting finish of 1 more threads
+2021-12-16 10:41:29,850 : INFO : worker thread finished; awaiting finish of 0 more threads
+2021-12-16 10:41:29,850 : INFO : EPOCH - 5 : training on 7682507 raw words (5658159 effective words) took 6.4s, 886271 effective words/s
+2021-12-16 10:41:29,850 : INFO : training on a 38412535 raw words (28291724 effective words) took 29.5s, 958088 effective words/s
+2021-12-16 10:41:29,851 : INFO : saving Word2Vec object under checkpoints/word2vec/word2vec.model, separately None
+2021-12-16 10:41:29,851 : INFO : not storing attribute vectors_norm
+2021-12-16 10:41:29,851 : INFO : not storing attribute cum_table
+2021-12-16 10:41:30,260 : INFO : saved checkpoints/word2vec/word2vec.model
+2021-12-16 10:41:30,280 : INFO : loading Word2Vec object from checkpoints/word2vec/word2vec.model
+2021-12-16 10:41:30,636 : INFO : loading wv recursively from checkpoints/word2vec/word2vec.model.wv.* with mmap=None
+2021-12-16 10:41:30,636 : INFO : setting ignored attribute vectors_norm to None
+2021-12-16 10:41:30,636 : INFO : loading vocabulary recursively from checkpoints/word2vec/word2vec.model.vocabulary.* with mmap=None
+2021-12-16 10:41:30,636 : INFO : loading trainables recursively from checkpoints/word2vec/word2vec.model.trainables.* with mmap=None
+2021-12-16 10:41:30,636 : INFO : setting ignored attribute cum_table to None
+2021-12-16 10:41:30,636 : INFO : loaded checkpoints/word2vec/word2vec.model
+2021-12-16 10:41:30,661 : INFO : precomputing L2-norms of word weight vectors
+小姐姐 0.7454344630241394
+女性朋友 0.705406665802002
+bb 0.6790809631347656
+姑娘 0.6788433790206909
+英雄 0.6757936477661133
+佳人 0.6711596250534058
+美眉 0.6640567779541016
+无余 0.6639443635940552
+妹妹 0.6605010628700256
+小伙子 0.6598637104034424
+辣妈 0.6596797704696655
+患者 0.6577975749969482
+汉子 0.6571693420410156
+女孩 0.6496915817260742
+时尚女性 0.6467355489730835
+长大 0.6450095176696777
+er 0.6428356766700745
+妹纸们 0.6392706632614136
+妈咪 0.6363592743873596
+小伙伴 0.6349706649780273

@@ -50,6 +50,8 @@ def get_args():
 if __name__ == "__main__":
     config = get_args()
     train(config)
-    # model = Word2Vec.load("word2vec.model")
-    # # numpy vector of a word
-    # vector = model.wv['computer']
+
+    model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
+    sim3 = model.most_similar(u'美女', topn=20)
+    for key in sim3:
+        print(key[0], key[1])

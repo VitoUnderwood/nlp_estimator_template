@@ -50,8 +50,15 @@
 # res = requests.post('http://192.168.140.158:8501/v1/models/QA:predict', data=param)
 # print(res.text)
 
-from gensim.models import Word2Vec
-model = Word2Vec.load("checkpoints/word2vec/word2vec.model")
-sim3 = model.most_similar(u'美女', topn=20)
-for key in sim3:
-    print(key[0], key[1])
+import tensorflow as tf
+A = tf.data.Dataset.range(1, 6).map(lambda x: tf.fill([x], x))
+iterator = A.make_one_shot_iterator()
+one_element = iterator.get_next()
+B = A.padded_batch(2, padded_shapes=[-1])
+iterator_B = B.make_one_shot_iterator()
+one_element_B = iterator_B.get_next()
+with tf.Session() as sess:
+    for i in range(5):
+        print(sess.run(one_element))
+    for i in range(3):
+        print(sess.run(one_element_B))
