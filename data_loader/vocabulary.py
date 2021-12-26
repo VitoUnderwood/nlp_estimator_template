@@ -2,9 +2,12 @@
 # 用于向vocab和matrix中添加新的元素
 import os.path
 import pickle
+import sys
 
 import numpy as np
 from gensim.models import Word2Vec
+
+sys.path.append("..")
 
 
 def expand_vocabulary(model_path, save_path):
@@ -30,6 +33,6 @@ def expand_vocabulary(model_path, save_path):
 
 
 if __name__ == "__main__":
-    model_path = "../checkpoints/word2vec/word2vec.model"
-    save_path = "../checkpoints/data2text"
+    model_path = "checkpoints/word2vec/word2vec.model"
+    save_path = "checkpoints/data2text"
     expand_vocabulary(model_path, save_path)

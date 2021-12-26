@@ -6,6 +6,7 @@ import os
 import pickle
 
 import jieba
+from tqdm import tqdm
 import tensorflow as tf
 
 from models.data2text.modeling import Model, ModelConfig
@@ -86,6 +87,10 @@ flags.DEFINE_integer(
     "The maximum total input sequence length after WordPiece tokenization. "
     "Sequences longer than this will be truncated, and sequences shorter "
     "than this will be padded.")
+
+flags.DEFINE_integer(
+    "max_early_stop_step", 10,
+    "The maximum step of eval loss not decrease ")
 
 flags.DEFINE_bool("do_train", False, "Whether to run train on the train set.")
 
@@ -203,27 +208,30 @@ class Processor(DataProcessor):
         examples = []
         for line in lines:
             record = json.loads(line)
-            features = record["feature"]
-            desc = " ".join(jieba.cut(record["desc"]))
-            keys = []
-            vals = []
-            for item in features:
-                keys.append(item[0])
-                vals.append(item[1])
-            examples.append(
-                InputExample(keys, vals, desc))
+            for _, seg in record["segment"].items():
+                keys = []
+                vals = []
+                features = seg["order"]
+                desc = seg["seg"]
+                for item in features:
+                    keys.append(item[0])
+                    vals.append(item[1])
+                if len(keys) > 0 and len(vals) > 0 and len(desc) > 0:
+                    examples.append(InputExample(keys, vals, desc))
         return examples
 
 
 def convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id, word2id):
     """Converts a single `InputExample` into a single `InputFeatures`."""
+    # 不使用end token了 直接pad
     keys = list(example.keys)
     vals = list(example.vals)
-    desc = example.desc
-    desc_tokens = list(jieba.cut(desc))
+    desc = example.desc[4:]
+    desc_tokens = desc.split()
 
-    if len(desc_tokens) > max_seq_length - 1:
-        desc_tokens = desc_tokens[0:max_seq_length - 1]
+    # 截断处理
+    if len(desc_tokens) > max_seq_length:
+        desc_tokens = desc_tokens[0:max_seq_length]
 
     if len(keys) > max_feat_num:
         keys = keys[0: max_feat_num]
@@ -234,7 +242,6 @@ def convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id
     output_tokens = []
     for token in desc_tokens:
         output_tokens.append(token)
-    output_tokens.append("<E>")
 
     key_input_ids = [key2id.get(word, key2id["<UNK>"]) for word in keys]
     val_input_ids = [val2id.get(word, val2id["<UNK>"]) for word in vals]
@@ -473,13 +480,12 @@ def main(_):
     }
 
     # 单机多卡训练
-    mirrored_strategy = tf.distribute.MirroredStrategy()
+    # mirrored_strategy = tf.distribute.MirroredStrategy()
     # 定义模型save的频率，路径
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.output_dir,
         tf_random_seed=2021,
         log_step_count_steps=100,
-        train_distribute=mirrored_strategy
     )
 
     estimator = tf.estimator.Estimator(
@@ -502,7 +508,7 @@ def main(_):
                 key2id, val2id, word2id, train_file)
         if not tf.gfile.Exists(eval_file):
             file_based_convert_examples_to_features(
-                train_examples, FLAGS.max_feat_num, FLAGS.max_seq_length,
+                eval_examples, FLAGS.max_feat_num, FLAGS.max_seq_length,
                 key2id, val2id, word2id, eval_file)
 
         tf.logging.info("***** Running training *****")
@@ -532,12 +538,13 @@ def main(_):
         # early stop hook
         early_stopping_hook = tf.estimator.experimental.stop_if_no_decrease_hook(estimator,
                                                                                  metric_name="loss",
-                                                                                 max_steps_without_decrease=5,
+                                                                                 max_steps_without_decrease=FLAGS.max_early_stop_step,
                                                                                  run_every_steps=1,
                                                                                  run_every_secs=None)
 
         # 在train函数中存在training.latest_checkpoint(checkpoint_dir))，saver.restore()所以说每一次都会自动加载与模型匹配的参数，如果模型发生变化，
         # 会报错，这时候需要重新定义一个model dir保存新模型
+        # 可以在train spec中添加参数max_steps=None 控制最大训练步数
         tf.estimator.train_and_evaluate(estimator,
                                         train_spec=tf.estimator.TrainSpec(train_input_fn, hooks=[early_stopping_hook]),
                                         eval_spec=tf.estimator.EvalSpec(eval_input_fn)
@@ -556,7 +563,7 @@ def main(_):
         #         writer.write("%s = %s\n" % (key, str(result[key])))
 
         # save model for tensorflow service
-    estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
+        estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
 
     if FLAGS.do_predict:
         predict_examples = processor.get_test_examples(FLAGS.data_dir)
@@ -581,14 +588,18 @@ def main(_):
             drop_remainder=True)
 
         result = estimator.predict(input_fn=predict_input_fn)
-        if FLAGS.beam_width > 1:
-            final_answer = get_out_put_from_tokens_beam_search(result, id2word)
-        else:
-            final_answer = get_out_put_from_tokens(result, id2word)
+
+        all_string_sent_cut, all_string_sent = get_out_put_from_tokens_beam_search(result, id2word)
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
+
+        assert num_actual_predict_examples == len(all_string_sent)
+
         with tf.gfile.GFile(output_predict_file, "w") as writer:
-            for each_answer in final_answer:
+            for example, each_answer in tqdm(zip(predict_examples, all_string_sent)):
+                for key, val in zip(example.keys, example.vals):
+                    writer.write(key+":"+val+"\t")
+                writer.write(example.desc+"\t")
                 writer.write(each_answer + "\n")
 
 

@@ -13,42 +13,7 @@
 
 
 
-# import json
-#
-# import requests
-#
-# tmp = [1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545,
-#        1, 442, 5562, 2, 545]
-#
-# input_ids = []
-#
-# for _ in range(16):
-#     input_ids.append(tmp)
-#
-# output_ids = input_ids
-#
-# data = {"instances": [
-#     {
-#         "input_ids": tmp,
-#         "output_ids": tmp
-#     }
-# ]
-# }
-# # data = {"instances": [5, 7, 9]
-# # }
-#
-# param = json.dumps(data)
-# # res = requests.post('http://localhost:8502/v1/models/half_plus_two:predict', data=param)
-# res = requests.post('http://192.168.140.158:8501/v1/models/QA:predict', data=param)
-# print(res.text)
+
 
 import tensorflow as tf
 A = tf.data.Dataset.range(1, 6).map(lambda x: tf.fill([x], x))

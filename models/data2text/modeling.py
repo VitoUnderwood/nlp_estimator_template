@@ -70,6 +70,8 @@ class Model(object):
             start_tokens = tf.tile([start_token], [batch_size])
             teacher_input_ids = tf.concat([tf.expand_dims(start_tokens, 1), output_ids], 1)
             teacher_input_embed = tf.nn.embedding_lookup(word_embedding, teacher_input_ids)
+            input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(key_input_ids, pad)), 1)
+            output_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(output_ids, pad)), 1)
 
         with tf.variable_scope("encoder"):
             with tf.variable_scope("input_encoder"):
@@ -83,17 +85,23 @@ class Model(object):
                 # 这里面的[output_fw, output_bw]可以直接用outputs进行代替。
                 # output_states为(output_state_fw, output_state_bw)，包含了前向和后向最后的隐藏状态的组成的元组。
                 # output_state_fw和output_state_bw的类型为LSTMStateTuple，由（c,h）组成，分别代表memory cell 和hidden state.
-
+                # 返回的如果是双向rnn, 第一个是前向, 第二个是后向 [2, batch_size, max_seq_len, hidden_size]
+                # 如果是多层rnn 那么outputs不变, final state变成n_layer的list[2, list]
                 input_encoder_outputs, input_encoder_final_state = tf.nn.bidirectional_dynamic_rnn(
                     cell_fw=input_fw_cell,
                     cell_bw=input_bw_cell,
                     inputs=input_embed,
+                    sequence_length=input_lengths,
                     dtype=tf.float32)
                 # [batch_size, max_seq_length, hidden_size*2]
                 # axis = sum(axis(i))
+                # 最后一层的用于cross attention
                 input_encoder_outputs = tf.concat(input_encoder_outputs, -1)
-                # [batch_size, hidden_size*2]
-                input_encoder_final_state = tf.concat(input_encoder_final_state, -1)
+                if config.num_rnn_layers > 1:
+                    input_encoder_final_state = tf.concat(
+                        (input_encoder_final_state[0][-1], input_encoder_final_state[1][-1]), -1)
+                else:
+                    input_encoder_final_state = tf.concat(input_encoder_final_state, -1)
             with tf.variable_scope("output_encoder"):
                 # use for CVAE
                 output_fw_cell = get_rnn_cell("gru", config.num_rnn_layers, config.hidden_size, config.keep_prob,
@@ -104,11 +112,16 @@ class Model(object):
                     cell_fw=output_fw_cell,
                     cell_bw=output_bw_cell,
                     inputs=output_embed,
+                    sequence_length=output_lengths,
                     dtype=tf.float32)
                 # [batch_size, max_seq_length, hidden_size*2]
                 output_encoder_outputs = tf.concat(output_encoder_outputs, -1)
                 # [batch_size, hidden_size*2]
-                output_encoder_final_state = tf.concat(output_encoder_final_state, -1)
+                if config.num_rnn_layers > 1:
+                    output_encoder_final_state = tf.concat(
+                        (output_encoder_final_state[0][-1], output_encoder_final_state[1][-1]), -1)
+                else:
+                    output_encoder_final_state = tf.concat(output_encoder_final_state, -1)
 
         with tf.variable_scope("CVAE"):
             # 先验网络, 用于infer阶段
@@ -138,13 +151,16 @@ class Model(object):
             else:
                 dec_input = tf.concat((input_encoder_final_state, prior_z_state), 1)
 
+            # 不使用CVAE结构
+            # dec_input = input_encoder_final_state
+
         with tf.variable_scope("decoder"):
-            decoder_hidden_size = 4 * config.hidden_size
+            decoder_hidden_size = dec_input.shape.as_list()[-1]
+            # tf.logging.info(f"********************************************************************{decoder_hidden_size}********************************************************************")
             cell = tf.contrib.rnn.GRUCell(num_units=decoder_hidden_size)
             projection = tf.layers.Dense(config.vocab_size)
-            input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(key_input_ids, end_token)), 1)
             if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL:
-                teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, end_token)), 1)
+                teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, pad)), 1)
 
                 train_helper = tf.contrib.seq2seq.TrainingHelper(teacher_input_embed, teacher_input_lengths)
 
@@ -164,8 +180,7 @@ class Model(object):
                     initial_state=decoder_init_state,
                     output_layer=projection)
 
-                output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=basic_decoder,
-                                                                 maximum_iterations=maximum_iterations)
+                output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=basic_decoder, impute_finished=True)
 
                 with tf.variable_scope("loss"):
                     # ELBO
@@ -173,11 +188,13 @@ class Model(object):
                     self.kl_div = self.kl_divergence(prior_mu, prior_log_sigma, post_mu, post_log_sigma)
                     self.anneal_kl_divergence = kl_weight * self.kl_div
 
-                    logits = output.rnn_output
+                    # 正常来说teacher input 的长度多了一个<start>
+                    logits = output.rnn_output[:, :-1]
+                    # 调整logit 和 label 的 shape 一样后才能进行计算
                     cali_output_ids = output_ids[:, :tf.shape(logits)[1]]
                     # weights is mask for loss
-                    weights = tf.to_float(tf.not_equal(cali_output_ids, 2))
-                    # 这里必需要让两个tensor的形状一样，但是在output_id的长度并不是当前batch的数据的最大长度，而是实现预定的max_seq_len
+                    weights = tf.to_float(tf.not_equal(cali_output_ids, pad))
+                    # 这里必需要让两个tensor的形状一样，但是在logit相对output_id的长度多了一个<start>token， 所以，不妨去掉logit最后一个
                     self.rec_loss = tf.contrib.seq2seq.sequence_loss(logits, cali_output_ids, weights=weights)
                     # self.loss = tf.reduce_sum(
                     #     tf.nn.sparse_softmax_cross_entropy_with_logits(
@@ -186,7 +203,7 @@ class Model(object):
                     #     )
                     # ) / batch_size
                     # self.elbo_loss = self.rec_loss + self.kl_div
-                    self.elbo_loss = self.rec_loss
+                    self.elbo_loss = self.rec_loss + self.anneal_kl_divergence
 
             if mode == tf.estimator.ModeKeys.PREDICT:
                 encoder_outputs = tf.contrib.seq2seq.tile_batch(input_encoder_outputs, multiplier=beam_width)
@@ -204,14 +221,14 @@ class Model(object):
                                                              batch_size=batch_size * beam_width).clone(
                     cell_state=dec_input)
 
-                beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(attn_cell,
-                                                                    word_embedding,
-                                                                    start_tokens,
-                                                                    end_token,
-                                                                    decoder_initial_state,
+                beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(cell=attn_cell,
+                                                                    embedding=word_embedding,
+                                                                    start_tokens=start_tokens,
+                                                                    end_token=pad,
+                                                                    initial_state=decoder_initial_state,
                                                                     beam_width=beam_width,
                                                                     output_layer=projection)
-
+                # 这里不能使用impute finished参数， 否则会报错
                 output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=beam_decoder,
                                                                  maximum_iterations=maximum_iterations)
 

@@ -17,6 +17,12 @@ tensorflow的Estimator高级API，将模型的train, eval, predict, save规范�
 ## 主体架构
 ![img.png](img.png)
 
+## 流程
+
+1. 训练word2vec，然后使用vocabulary进行转化成模型可以使用的结构
+2. 根据训练结果，修改config.json中的参数，主要是vocab size会根据语料的不同进行变化，word2vec训练参数也会影响vocab size
+3. 训练模型train
+4. infer
 
 ## 参考链接
 - https://zhuanlan.zhihu.com/p/112062303
