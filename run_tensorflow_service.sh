@@ -9,13 +9,12 @@
 #  tensorflow/serving &
 
 
-#docker run -t -p 8501:8501 \
-#  -v "/Users/vito/PyCharmProjects/nlp_estimator_template/checkpoints/QA_CVAE:/models/QA" \
-#  -e MODEL_NAME=QA \
-#  tensorflow/serving:1.15.0 &
-
-
-sudo docker run -t -p 8501:8501 \
-  -v "/home/xwwang/nlp_estimator_template/checkpoints/QA_CVAE:/models/QA" \
-  -e MODEL_NAME=QA \
+docker run -t -p 8501:8501 \
+  -v "/Users/vito/PyCharmProjects/nlp_estimator_template/checkpoints/data2text:/models/DT" \
+  -e MODEL_NAME=DT \
   tensorflow/serving:1.15.0 &
+
+#sudo docker run -t -p 8501:8501 \
+#  -v "/home/xwwang/nlp_estimator_template/checkpoints/data2text:/models/DT" \
+#  -e MODEL_NAME=DT \
+#  tensorflow/serving:1.15.0 &
