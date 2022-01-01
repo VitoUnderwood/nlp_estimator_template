@@ -226,8 +226,7 @@ def convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id
     # 不使用end token了 直接pad
     keys = list(example.keys)
     vals = list(example.vals)
-    desc = example.desc[4:]
-    desc_tokens = desc.split()
+    desc_tokens = list(jieba.cut("".join(example.desc.split())))
 
     # 截断处理
     if len(desc_tokens) > max_seq_length:
@@ -482,9 +481,10 @@ def main(_):
     # 单机多卡训练
     # mirrored_strategy = tf.distribute.MirroredStrategy()
     # 定义模型save的频率，路径
+    # tf_random_seed = 2021,
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.output_dir,
-        tf_random_seed=2021,
+        keep_checkpoint_max=3,
         log_step_count_steps=100,
     )
 
@@ -585,7 +585,7 @@ def main(_):
             max_feat_num=FLAGS.max_feat_num,
             max_seq_length=FLAGS.max_seq_length,
             is_training=False,
-            drop_remainder=True)
+            drop_remainder=False)
 
         result = estimator.predict(input_fn=predict_input_fn)
 
@@ -593,14 +593,23 @@ def main(_):
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
 
-        assert num_actual_predict_examples == len(all_string_sent)
+        print(num_actual_predict_examples)
+
+        # print("==========================================================================================================================================================="+len(result))
+
+        # assert num_actual_predict_examples == len(all_string_sent)
+
+        with tf.gfile.GFile("checkpoints/data2text/demo.tsv", "w") as writer:
+            for example in predict_examples:
+                for key, val in zip(example.keys, example.vals):
+                    writer.write(key + ":" + val + "\t")
+                writer.write("\n")
 
         with tf.gfile.GFile(output_predict_file, "w") as writer:
-            for example, each_answer in tqdm(zip(predict_examples, all_string_sent)):
-                for key, val in zip(example.keys, example.vals):
-                    writer.write(key+":"+val+"\t")
-                writer.write(example.desc+"\t")
+            for each_answer in all_string_sent:
                 writer.write(each_answer + "\n")
+
+        estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
 
 
 if __name__ == "__main__":

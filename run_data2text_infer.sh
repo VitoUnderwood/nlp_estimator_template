@@ -17,5 +17,5 @@ python run_data2text.py \
   --learning_rate=2e-5 \
   --output_dir=$MODEL_DIR \
   --beam_width=10 \
-  --maximum_iterations=50 &> "logs/data2text_$now.infer"
+  --maximum_iterations=50
 

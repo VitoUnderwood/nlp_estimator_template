@@ -221,14 +221,14 @@ class Model(object):
                                                              batch_size=batch_size * beam_width).clone(
                     cell_state=dec_input)
 
-                beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(cell=attn_cell,
-                                                                    embedding=word_embedding,
-                                                                    start_tokens=start_tokens,
-                                                                    end_token=pad,
-                                                                    initial_state=decoder_initial_state,
+                beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(attn_cell,
+                                                                    word_embedding,
+                                                                    start_tokens,
+                                                                    pad,
+                                                                    decoder_initial_state,
                                                                     beam_width=beam_width,
                                                                     output_layer=projection)
-                # 这里不能使用impute finished参数， 否则会报错
+
                 output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=beam_decoder,
                                                                  maximum_iterations=maximum_iterations)
 

@@ -12,18 +12,16 @@
 #
 
 
+# import tensorflow as tf
+# A = tf.data.Dataset.range(1, 6).map(lambda x: tf.fill([x], x))
+# iterator = A.make_one_shot_iterator()
+# one_element = iterator.get_next()
+# B = A.padded_batch(2, padded_shapes=[-1])
+# iterator_B = B.make_one_shot_iterator()
+# one_element_B = iterator_B.get_next()
+# with tf.Session() as sess:
+#     for i in range(5):
+#         print(sess.run(one_element))
+#     for i in range(3):
+#         print(sess.run(one_element_B))
 
-
-
-import tensorflow as tf
-A = tf.data.Dataset.range(1, 6).map(lambda x: tf.fill([x], x))
-iterator = A.make_one_shot_iterator()
-one_element = iterator.get_next()
-B = A.padded_batch(2, padded_shapes=[-1])
-iterator_B = B.make_one_shot_iterator()
-one_element_B = iterator_B.get_next()
-with tf.Session() as sess:
-    for i in range(5):
-        print(sess.run(one_element))
-    for i in range(3):
-        print(sess.run(one_element_B))
