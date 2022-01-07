@@ -209,14 +209,14 @@ class Processor(DataProcessor):
         for line in lines:
             record = json.loads(line)
             for _, seg in record["segment"].items():
-                keys = []
-                vals = []
+                keys = [record["feature"][0][0]]
+                vals = [record["feature"][0][1]]
                 features = seg["order"]
                 desc = seg["seg"]
                 for item in features:
                     keys.append(item[0])
                     vals.append(item[1])
-                if len(keys) > 0 and len(vals) > 0 and len(desc) > 0:
+                if len(keys) > 1 and len(vals) > 1 and len(desc) > 0:
                     examples.append(InputExample(keys, vals, desc))
         return examples
 
@@ -224,8 +224,9 @@ class Processor(DataProcessor):
 def convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id, word2id):
     """Converts a single `InputExample` into a single `InputFeatures`."""
     # 不使用end token了 直接pad
-    keys = list(example.keys)
-    vals = list(example.vals)
+    keys = example.keys
+    # print(keys)
+    vals = example.vals
     desc_tokens = list(jieba.cut("".join(example.desc.split())))
 
     # 截断处理
