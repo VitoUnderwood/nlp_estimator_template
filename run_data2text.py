@@ -1,16 +1,15 @@
 # coding=utf-8
 
-import collections
 import json
 import os
 import pickle
 
 import jieba
-from tqdm import tqdm
+import numpy as np
 import tensorflow as tf
 
 from models.data2text.modeling import Model, ModelConfig
-from models.model_utils import get_out_put_from_tokens_beam_search, get_out_put_from_tokens
+from models.model_utils import get_out_put_from_tokens_beam_search
 
 try:
     from tensorflow.python.util import module_wrapper as deprecation
@@ -121,11 +120,14 @@ flags.DEFINE_integer("iterations_per_loop", 1000,
 class InputExample(object):
     """A single training/test example for simple sequence classification."""
 
-    def __init__(self, keys, vals, desc):
+    def __init__(self, cate, keys, vals, text, outputs, groups):
         """Constructs a InputExample. """
+        self.cate = cate
         self.keys = keys
         self.vals = vals
-        self.desc = desc
+        self.text = text
+        self.outputs = outputs
+        self.groups = groups
 
 
 class PaddingInputExample(object):
@@ -145,12 +147,18 @@ class InputFeatures(object):
     """A single set of features of data."""
 
     def __init__(self,
+                 cate_id,
                  key_input_ids,
                  val_input_ids,
-                 output_ids):
+                 text_ids,
+                 outputs_ids,
+                 groups_ids):
+        self.cate_id = cate_id
         self.key_input_ids = key_input_ids
         self.val_input_ids = val_input_ids
-        self.output_ids = output_ids
+        self.text_ids = text_ids
+        self.outputs_ids = outputs_ids
+        self.groups_ids = groups_ids
 
 
 class DataProcessor(object):
@@ -208,67 +216,73 @@ class Processor(DataProcessor):
         examples = []
         for line in lines:
             record = json.loads(line)
+            feats = record["feature"]
+            keys = []
+            vals = []
+            for item in feats:
+                keys.append(item[0])
+                vals.append(item[1])
+            cate = dict(record['feature'])['类型']
+            text = list(jieba.cut("".join(record['desc'].split())))
+            outputs = []
+            groups = []
             for _, seg in record["segment"].items():
-                keys = [record["feature"][0][0]]
-                vals = [record["feature"][0][1]]
-                features = seg["order"]
-                desc = seg["seg"]
-                for item in features:
-                    keys.append(item[0])
-                    vals.append(item[1])
-                if len(keys) > 1 and len(vals) > 1 and len(desc) > 0:
-                    examples.append(InputExample(keys, vals, desc))
+                order = [item[:2] for item in seg['order']]
+                sent = list(jieba.cut("".join(seg['seg'].split())))
+                if len(order) > 0 and len(sent) > 0:
+                    groups.append(order)
+                    outputs.append(sent)
+            if len(keys) > 1 and len(text) > 1 and len(outputs) > 1:
+                examples.append(InputExample(cate, keys, vals, text, outputs, groups))
+            # print(examples[-1])
         return examples
 
 
-def convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id, word2id):
+def convert_single_example(example: InputExample, key2id, val2id, word2id):
     """Converts a single `InputExample` into a single `InputFeatures`."""
     # 不使用end token了 直接pad
+    # 文本都是提前使用结巴进行分好的词，以及使用jieba结果训练的词向量
+    cate = example.cate
     keys = example.keys
-    # print(keys)
     vals = example.vals
-    desc_tokens = list(jieba.cut("".join(example.desc.split())))
+    text = example.text
+    outputs = example.outputs
+    groups = example.groups
 
-    # 截断处理
-    if len(desc_tokens) > max_seq_length:
-        desc_tokens = desc_tokens[0:max_seq_length]
-
-    if len(keys) > max_feat_num:
-        keys = keys[0: max_feat_num]
-        vals = vals[0: max_feat_num]
-
-    # [PAD] 0 [S] 1 [E] 2
-    # 由于做的是nlg，所以go用作第一个输入的token，在decode阶段需要使用，但是encode不需要
-    output_tokens = []
-    for token in desc_tokens:
-        output_tokens.append(token)
-
+    key_val = list(zip(keys, vals))
+    # 将分组后的kv和未进行分组的所有的kv进行映射, 使用list index即可
+    groups_ids = []
+    for order in groups:
+        groups_ids.append([key_val.index((k, v)) for k, v in order])
+    # convert to id to compute
+    cate_id = [val2id.get(cate, val2id["<UNK>"])]
     key_input_ids = [key2id.get(word, key2id["<UNK>"]) for word in keys]
     val_input_ids = [val2id.get(word, val2id["<UNK>"]) for word in vals]
-    output_ids = [word2id.get(word, word2id["<UNK>"]) for word in output_tokens]
+    text_ids = [word2id.get(word, word2id["<UNK>"]) for word in text]
+    outputs_ids = []
+    for output in outputs:
+        outputs_ids.append([word2id.get(word, word2id["<UNK>"]) for word in output])
 
-    while len(output_ids) < max_seq_length:
-        output_ids.append(word2id["<PAD>"])
-
-    while len(key_input_ids) < max_feat_num:
-        key_input_ids.append(key2id["<PAD>"])
-
-    while len(val_input_ids) < max_feat_num:
-        val_input_ids.append(val2id["<PAD>"])
-
-    assert len(output_ids) == max_seq_length
-    assert len(key_input_ids) == max_feat_num
-    assert len(val_input_ids) == max_feat_num
+    # 截断填充处理，主要针对的是output和group中第二维度不同的情况
+    for item in [outputs_ids, groups_ids]:
+        max_len = -1
+        for lst in item:
+            max_len = max(max_len, len(lst))
+        for idx, lst in enumerate(item):
+            if len(lst) < max_len:
+                item[idx] = lst + [0] * (max_len - len(lst))
 
     feature = InputFeatures(
+        cate_id=cate_id,
         key_input_ids=key_input_ids,
         val_input_ids=val_input_ids,
-        output_ids=output_ids)
+        text_ids=text_ids,
+        outputs_ids=outputs_ids,
+        groups_ids=groups_ids)
     return feature
 
 
-def file_based_convert_examples_to_features(examples, max_feat_num, max_seq_length, key2id, val2id, word2id,
-                                            output_file):
+def file_based_convert_examples_to_features(examples, key2id, val2id, word2id, output_file):
     """Convert a set of `InputExample`s to a TFRecord file.
     将输入和输出融和到一起构造模型的input features
     """
@@ -279,50 +293,80 @@ def file_based_convert_examples_to_features(examples, max_feat_num, max_seq_leng
         if ex_index % 10000 == 0:
             tf.logging.info(f"Writing example {ex_index} of {len(examples)} for {output_file}")
 
-        feature = convert_single_example(example, max_feat_num, max_seq_length, key2id, val2id, word2id)
+        feature = convert_single_example(example, key2id, val2id, word2id)
 
         def create_int_feature(values):
-            f = tf.train.Feature(int64_list=tf.train.Int64List(value=list(values)))
+            if isinstance(values, list):
+                f = tf.train.Feature(int64_list=tf.train.Int64List(value=values))
+            else:
+                f = tf.train.Feature(int64_list=tf.train.Int64List(value=[values]))
             return f
 
-        features = collections.OrderedDict()
-        features["key_input_ids"] = create_int_feature(feature.key_input_ids)
-        features["val_input_ids"] = create_int_feature(feature.val_input_ids)
-        features["output_ids"] = create_int_feature(feature.output_ids)
+        def create_matrix_feature(values):
+            return tf.train.Feature(
+                bytes_list=tf.train.BytesList(value=[np.array(values).astype(np.int64).tostring()]))
+
+        features = {
+            "cate_id": create_matrix_feature(feature.cate_id),
+            "key_input_ids": create_matrix_feature(feature.key_input_ids),
+            "val_input_ids": create_matrix_feature(feature.val_input_ids),
+            "text_ids": create_matrix_feature(feature.text_ids),
+            "outputs_ids": create_matrix_feature(feature.outputs_ids),
+            "outputs_shape": create_matrix_feature([len(feature.outputs_ids), len(feature.outputs_ids[0])]),
+            "groups_ids": create_matrix_feature(feature.groups_ids),
+            "groups_shape": create_matrix_feature([len(feature.groups_ids), len(feature.groups_ids[0])])
+        }
+        # matrix特殊写法
 
         tf_example = tf.train.Example(features=tf.train.Features(feature=features))
         writer.write(tf_example.SerializeToString())
     writer.close()
 
 
-def file_based_input_fn_builder(input_file, max_feat_num, max_seq_length, is_training,
-                                drop_remainder):
+def file_based_input_fn_builder(input_file, is_training, drop_remainder):
     """
     train(input_fn)
-    :type max_feat_num: feature数量
-    :param max_seq_length:
     :param input_file: tf.record 的文件路径
     :param is_training:
     :param drop_remainder: 是否保留最后一个不完整的batch
     :return:
     """
 
-    name_to_features = {
-        "key_input_ids": tf.FixedLenFeature([max_feat_num], tf.int64),
-        "val_input_ids": tf.FixedLenFeature([max_feat_num], tf.int64),
-        "output_ids": tf.FixedLenFeature([max_seq_length], tf.int64)}
-
-    def _decode_record(record, features):
+    def _decode_record(record):
         """Decodes a record to a TensorFlow example."""
-        example = tf.parse_single_example(record, features)
+        features = {
+            "cate_id": tf.FixedLenFeature((), tf.string),
+            "key_input_ids": tf.FixedLenFeature((), tf.string),
+            "val_input_ids": tf.FixedLenFeature((), tf.string),
+            "text_ids": tf.FixedLenFeature((), tf.string),
+            "outputs_ids": tf.FixedLenFeature((), tf.string),
+            "outputs_shape": tf.FixedLenFeature((), tf.string),
+            "groups_ids": tf.FixedLenFeature((), tf.string),
+            "groups_shape": tf.FixedLenFeature((), tf.string)
+        }
+        raw_example = tf.parse_single_example(record, features)
         # tf.Example only supports tf.int64, but the TPU only supports tf.int32.
         # So cast all int64 to int32.
-        for name in list(example.keys()):
-            t = example[name]
-            if t.dtype == tf.int64:
-                t = tf.to_int32(t)
-            example[name] = t
-
+        # for name in list(example.keys()):
+        #     t = example[name]
+        #     if t.dtype == tf.int64:
+        #         t = tf.to_int32(t)
+        #     example[name] = t
+        example = {
+            'cate_id': tf.decode_raw(raw_example['cate_id'], tf.int64),
+            'key_input_ids': tf.decode_raw(raw_example['key_input_ids'], tf.int64),
+            'val_input_ids': tf.decode_raw(raw_example['val_input_ids'], tf.int64),
+            'text_ids': tf.decode_raw(raw_example['text_ids'], tf.int64),
+            'outputs_ids': tf.reshape(tf.decode_raw(raw_example['outputs_ids'], tf.int64),
+                                      tf.decode_raw(raw_example['outputs_shape'], tf.int64)),
+            # 'outputs_shape': tf.decode_raw(raw_example['outputs_shape'], tf.int64),
+            'groups_ids': tf.reshape(tf.decode_raw(raw_example['groups_ids'], tf.int64),
+                                     tf.decode_raw(raw_example['groups_shape'], tf.int64)),
+            # 'groups_shape': tf.decode_raw(raw_example['groups_shape'], tf.int64)
+        }
+        # return raw_example['cate_id'], raw_example['key_input_ids'], raw_example['val_input_ids'], raw_example[
+        #     'text_ids'], tf.decode_raw(raw_example['outputs_ids'], tf.int64), tf.decode_raw(raw_example['groups_ids'],
+        #                                                                                     tf.int64)
         return example
 
     def input_fn(params):
@@ -330,16 +374,26 @@ def file_based_input_fn_builder(input_file, max_feat_num, max_seq_length, is_tra
         # For training, we want a lot of parallel reading and shuffling.
         # For eval, we want no shuffling and parallel reading doesn't matter.
         d = tf.data.TFRecordDataset(input_file)
+        d = d.map(_decode_record)
         if is_training:
             d = d.repeat()
             d = d.shuffle(buffer_size=10000)
 
-        d = d.apply(
-            tf.contrib.data.map_and_batch(
-                lambda record: _decode_record(record, name_to_features),
-                batch_size=params["batch_size"],
-                drop_remainder=drop_remainder))
+        # 默认使用0进行填充， 具体可使用padding_value设置
+        # 如果说matrix中的元素是不等长的，例如[[1,2,3],[1,2],[1]]，内部元素先手动填充到最长，然后第一维度自动pad
+        padded_shapes = {
+            'cate_id': tf.TensorShape([None]),  # [] Scalar elements, no padding.
+            'key_input_ids': tf.TensorShape([None]),  # [None] Vector elements, padded to longest.
+            'val_input_ids': tf.TensorShape([None]),  # [None, None]Matrix elements, padded to longest
+            'text_ids': tf.TensorShape([None]),
+            'outputs_ids': tf.TensorShape([None, None]),
+            'groups_ids': tf.TensorShape([None, None])
+        }
 
+        # padded_shapes = ([None], [None], [None], [None], [None, None], [None, None])
+        d = d.padded_batch(batch_size=params["batch_size"],
+                           padded_shapes=padded_shapes,
+                           drop_remainder=drop_remainder)
         return d
 
     return input_fn
@@ -360,17 +414,23 @@ def model_fn_builder(model_config, learning_rate, word_vectors=None):
         for name in sorted(features.keys()):
             tf.logging.info(f"name = {name}, shape = {features[name].shape}")
 
+        cate_id = features["cate_id"]
         key_input_ids = features["key_input_ids"]
         val_input_ids = features["val_input_ids"]
-        output_ids = features["output_ids"]
+        text_ids = features["text_ids"]
+        outputs_ids = features["outputs_ids"]
+        groups_ids = features["groups_ids"]
 
         if not mode == tf.estimator.ModeKeys.TRAIN:
             model_config.keep_prob = 1
 
         model = Model(config=model_config,
+                      cate_id=cate_id,
                       key_input_ids=key_input_ids,
                       val_input_ids=val_input_ids,
-                      output_ids=output_ids,
+                      text_ids=text_ids,
+                      outputs_ids=outputs_ids,
+                      groups_ids=groups_ids,
                       beam_width=FLAGS.beam_width,
                       maximum_iterations=FLAGS.maximum_iterations,
                       mode=mode,
@@ -498,43 +558,20 @@ def main(_):
         train_file = os.path.join(FLAGS.output_dir, "train.tf_record")
         eval_file = os.path.join(FLAGS.output_dir, "eval.tf_record")
 
-        train_examples = processor.get_train_examples(FLAGS.data_dir)
-
-        eval_examples = processor.get_dev_examples(FLAGS.data_dir)
-        num_actual_eval_examples = len(eval_examples)
-
         if not tf.gfile.Exists(train_file):
-            file_based_convert_examples_to_features(
-                train_examples, FLAGS.max_feat_num, FLAGS.max_seq_length,
-                key2id, val2id, word2id, train_file)
+            train_examples = processor.get_train_examples(FLAGS.data_dir)
+            file_based_convert_examples_to_features(train_examples, key2id, val2id, word2id, train_file)
+            tf.logging.info("  Num examples = %d", len(train_examples))
+
         if not tf.gfile.Exists(eval_file):
+            eval_examples = processor.get_dev_examples(FLAGS.data_dir)
             file_based_convert_examples_to_features(
-                eval_examples, FLAGS.max_feat_num, FLAGS.max_seq_length,
-                key2id, val2id, word2id, eval_file)
+                eval_examples, key2id, val2id, word2id, eval_file)
+            tf.logging.info("  Num examples = %d", len(eval_examples))
 
-        tf.logging.info("***** Running training *****")
-        tf.logging.info("  Num examples = %d", len(train_examples))
-        tf.logging.info("  Batch size = %d", FLAGS.train_batch_size)
+        train_input_fn = file_based_input_fn_builder(input_file=train_file, is_training=True, drop_remainder=True)
 
-        train_input_fn = file_based_input_fn_builder(
-            input_file=train_file,
-            max_feat_num=FLAGS.max_feat_num,
-            max_seq_length=FLAGS.max_seq_length,
-            is_training=True,
-            drop_remainder=True)
-
-        tf.logging.info("***** Running evaluation *****")
-        tf.logging.info("\tNum examples = %d (%d actual, %d padding)",
-                        len(eval_examples), num_actual_eval_examples,
-                        len(eval_examples) - num_actual_eval_examples)
-        tf.logging.info("\tBatch size = %d", FLAGS.eval_batch_size)
-
-        eval_input_fn = file_based_input_fn_builder(
-            input_file=eval_file,
-            max_feat_num=FLAGS.max_feat_num,
-            max_seq_length=FLAGS.max_seq_length,
-            is_training=False,
-            drop_remainder=True)
+        eval_input_fn = file_based_input_fn_builder(input_file=eval_file, is_training=False, drop_remainder=True)
 
         # early stop hook
         early_stopping_hook = tf.estimator.experimental.stop_if_no_decrease_hook(estimator,
@@ -572,8 +609,7 @@ def main(_):
 
         predict_file = os.path.join(FLAGS.output_dir, "predict.tf_record")
         if not tf.gfile.Exists(predict_file):
-            file_based_convert_examples_to_features(predict_examples, FLAGS.max_feat_num, FLAGS.max_seq_length,
-                                                    key2id, val2id, word2id, predict_file)
+            file_based_convert_examples_to_features(predict_examples, key2id, val2id, word2id, predict_file)
 
         tf.logging.info("***** Running prediction*****")
         tf.logging.info("  Num examples = %d (%d actual, %d padding)",
@@ -581,12 +617,7 @@ def main(_):
                         len(predict_examples) - num_actual_predict_examples)
         tf.logging.info("  Batch size = %d", FLAGS.predict_batch_size)
 
-        predict_input_fn = file_based_input_fn_builder(
-            input_file=predict_file,
-            max_feat_num=FLAGS.max_feat_num,
-            max_seq_length=FLAGS.max_seq_length,
-            is_training=False,
-            drop_remainder=False)
+        predict_input_fn = file_based_input_fn_builder(input_file=predict_file, is_training=False, drop_remainder=False)
 
         result = estimator.predict(input_fn=predict_input_fn)
 

@@ -12,7 +12,8 @@
 #
 
 
-# import tensorflow as tf
+import tensorflow as tf
+
 # A = tf.data.Dataset.range(1, 6).map(lambda x: tf.fill([x], x))
 # iterator = A.make_one_shot_iterator()
 # one_element = iterator.get_next()
