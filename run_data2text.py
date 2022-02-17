@@ -11,11 +11,11 @@ import tensorflow as tf
 from models.data2text.modeling import Model, ModelConfig
 from models.model_utils import get_out_put_from_tokens_beam_search
 
-try:
-    from tensorflow.python.util import module_wrapper as deprecation
-except ImportError:
-    from tensorflow.python.util import deprecation_wrapper as deprecation
-deprecation._PER_MODULE_WARNING_LIMIT = 0
+# try:
+#     from tensorflow.python.util import module_wrapper as deprecation
+# except ImportError:
+#     from tensorflow.python.util import deprecation_wrapper as deprecation
+# deprecation._PER_MODULE_WARNING_LIMIT = 0
 
 # os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 
@@ -26,7 +26,7 @@ logger.propagate = False
 flags = tf.flags
 FLAGS = flags.FLAGS
 
-# Required parameters, file path
+# Required parameters, file path, super params defined in config.json
 flags.DEFINE_string(
     "data_dir", None,
     "The input data dir. Should contain the .tsv files (or other data files) "
@@ -59,21 +59,9 @@ flags.DEFINE_integer(
     "beam search parameter which control the search window size K")
 
 flags.DEFINE_integer(
-    "input_max_len", 20,
-    "The maximum input sequence length")
-
-flags.DEFINE_integer(
-    "output_max_len", 20,
-    "The maximum output sequence length")
-
-flags.DEFINE_integer(
-    "maximum_iterations", 128,
+    "maximum_iterations", 50,
     "The maximum generation sequence length"
 )
-flags.DEFINE_bool(
-    "do_lower_case", True,
-    "Whether to lower case the input text. Should be True for uncased "
-    "models and False for cased models.")
 
 flags.DEFINE_integer(
     "max_feat_num", 10,
@@ -232,7 +220,7 @@ class Processor(DataProcessor):
                 if len(order) > 0 and len(sent) > 0:
                     groups.append(order)
                     outputs.append(sent)
-            if len(keys) > 1 and len(text) > 1 and len(outputs) > 1:
+            if len(keys) > 0 and len(text) > 0 and len(outputs) > 0 and len(cate) > 0:
                 examples.append(InputExample(cate, keys, vals, text, outputs, groups))
             # print(examples[-1])
         return examples
@@ -261,7 +249,10 @@ def convert_single_example(example: InputExample, key2id, val2id, word2id):
     text_ids = [word2id.get(word, word2id["<UNK>"]) for word in text]
     outputs_ids = []
     for output in outputs:
-        outputs_ids.append([word2id.get(word, word2id["<UNK>"]) for word in output])
+        # teacher forcing has one new token start token, need a end token to alien
+        tmp = [word2id.get(word, word2id["<UNK>"]) for word in output]
+        tmp.append(word2id.get("<PAD>", word2id["<UNK>"]))
+        outputs_ids.append(tmp)
 
     # 截断填充处理，主要针对的是output和group中第二维度不同的情况
     for item in [outputs_ids, groups_ids]:
@@ -304,7 +295,7 @@ def file_based_convert_examples_to_features(examples, key2id, val2id, word2id, o
 
         def create_matrix_feature(values):
             return tf.train.Feature(
-                bytes_list=tf.train.BytesList(value=[np.array(values).astype(np.int64).tostring()]))
+                bytes_list=tf.train.BytesList(value=[np.array(values).astype(np.int32).tostring()]))
 
         features = {
             "cate_id": create_matrix_feature(feature.cate_id),
@@ -353,20 +344,20 @@ def file_based_input_fn_builder(input_file, is_training, drop_remainder):
         #         t = tf.to_int32(t)
         #     example[name] = t
         example = {
-            'cate_id': tf.decode_raw(raw_example['cate_id'], tf.int64),
-            'key_input_ids': tf.decode_raw(raw_example['key_input_ids'], tf.int64),
-            'val_input_ids': tf.decode_raw(raw_example['val_input_ids'], tf.int64),
-            'text_ids': tf.decode_raw(raw_example['text_ids'], tf.int64),
-            'outputs_ids': tf.reshape(tf.decode_raw(raw_example['outputs_ids'], tf.int64),
-                                      tf.decode_raw(raw_example['outputs_shape'], tf.int64)),
-            # 'outputs_shape': tf.decode_raw(raw_example['outputs_shape'], tf.int64),
-            'groups_ids': tf.reshape(tf.decode_raw(raw_example['groups_ids'], tf.int64),
-                                     tf.decode_raw(raw_example['groups_shape'], tf.int64)),
-            # 'groups_shape': tf.decode_raw(raw_example['groups_shape'], tf.int64)
+            'cate_id': tf.decode_raw(raw_example['cate_id'], tf.int32),
+            'key_input_ids': tf.decode_raw(raw_example['key_input_ids'], tf.int32),
+            'val_input_ids': tf.decode_raw(raw_example['val_input_ids'], tf.int32),
+            'text_ids': tf.decode_raw(raw_example['text_ids'], tf.int32),
+            'outputs_ids': tf.reshape(tf.decode_raw(raw_example['outputs_ids'], tf.int32),
+                                      tf.decode_raw(raw_example['outputs_shape'], tf.int32)),
+            # 'outputs_shape': tf.decode_raw(raw_example['outputs_shape'], tf.int32),
+            'groups_ids': tf.reshape(tf.decode_raw(raw_example['groups_ids'], tf.int32),
+                                     tf.decode_raw(raw_example['groups_shape'], tf.int32)),
+            # 'groups_shape': tf.decode_raw(raw_example['groups_shape'], tf.int32)
         }
         # return raw_example['cate_id'], raw_example['key_input_ids'], raw_example['val_input_ids'], raw_example[
-        #     'text_ids'], tf.decode_raw(raw_example['outputs_ids'], tf.int64), tf.decode_raw(raw_example['groups_ids'],
-        #                                                                                     tf.int64)
+        #     'text_ids'], tf.decode_raw(raw_example['outputs_ids'], tf.int32), tf.decode_raw(raw_example['groups_ids'],
+        #                                                                                     tf.int32)
         return example
 
     def input_fn(params):
@@ -439,17 +430,19 @@ def model_fn_builder(model_config, learning_rate, word_vectors=None):
         # for train and eval
         if (mode == tf.estimator.ModeKeys.TRAIN or
                 mode == tf.estimator.ModeKeys.EVAL):
-            loss = model.elbo_loss
-            rec_loss = model.rec_loss
-            kl_div = model.kl_div
-            tf.summary.scalar('elbo_loss', loss)
-            tf.summary.scalar('kl_div', kl_div)
-            tf.summary.scalar('rec_loss', rec_loss)
+            elbo_loss = model.elbo_loss
+            stop_loss = model.stop_loss
+            bow_loss = model.bow_loss
+            # kl_div = model.kl_
+            train_loss = model.train_loss
+            tf.summary.scalar('elbo_loss', elbo_loss)
+            tf.summary.scalar('stop_loss', stop_loss)
+            tf.summary.scalar('train_loss', train_loss)
         else:
-            loss = None
+            train_loss = None
 
         if mode == tf.estimator.ModeKeys.TRAIN:
-            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,
+            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(train_loss,
                                                                                     global_step=tf.train.get_global_step())
         else:
             train_op = None
@@ -479,7 +472,7 @@ def model_fn_builder(model_config, learning_rate, word_vectors=None):
         return tf.estimator.EstimatorSpec(
             mode=mode,
             predictions=predictions,
-            loss=loss,
+            loss=train_loss,
             train_op=train_op)
 
     return model_fn
@@ -546,7 +539,7 @@ def main(_):
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.output_dir,
         keep_checkpoint_max=3,
-        log_step_count_steps=100,
+        log_step_count_steps=1,
     )
 
     estimator = tf.estimator.Estimator(
@@ -625,7 +618,7 @@ def main(_):
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
 
-        print(num_actual_predict_examples)
+        # print(num_actual_predict_examples)
 
         # print("==========================================================================================================================================================="+len(result))
 

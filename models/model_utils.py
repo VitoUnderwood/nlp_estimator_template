@@ -8,6 +8,7 @@ import tensorflow as tf
 def get_rnn_cell(rnn_type, num_layers, hidden_size, keep_prob, scope):
     """
     构建带有dropout的多层rnn结构，gru和lstm二选一
+    相同的variable_scope共享variable参数权重
     """
     with tf.variable_scope(scope):
         lst = []
