@@ -72,3 +72,42 @@ def get_assignment_map_from_checkpoint(tvars, init_checkpoint):
         initialized_variable_names[name + ":0"] = 1
 
     return assignment_map, initialized_variable_names
+
+
+def get_groups_output(predict_group_ids, id2word):
+    # [batch_size, i, max_iterations]
+    output = []
+    for group in predict_group_ids:
+        sents = []
+        for seg in group:
+            desc = []
+            dup = set()
+            for wid in seg:
+                if wid == 0:
+                    break
+                elif wid == 1:
+                    continue
+                else:
+                    desc.append(id2word[wid])
+            if str(desc) not in dup:
+                dup.add(str(desc))
+                sents.append(desc)
+        output.append(sents)
+    return output
+
+
+def get_groups_output_2(predict_group_ids, id2word):
+    # [batch_size, i, max_iterations]
+    output = ""
+    for group in predict_group_ids:
+        desc = []
+        for wid in group:
+            if wid == 0:
+                break
+            elif wid == 1:
+                continue
+            else:
+                desc.append(id2word[wid])
+        ans = "".join(desc)
+        output = output + ans
+    return output

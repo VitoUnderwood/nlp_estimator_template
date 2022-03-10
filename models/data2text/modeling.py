@@ -42,7 +42,6 @@ class Model(object):
         <PAD>', '<S>', '<E>'
         """
         # 动态batch_size，方便train 和 infer 阶段使用，方便部署，直接写死会导致infer必需和train的时候batch_size一致
-        self.config = config
         batch_size = tf.shape(key_input_ids)[0]
         # 控制数据的切换，不影响图的结构
         is_training = (mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL)
@@ -75,7 +74,7 @@ class Model(object):
                 # output_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(text_ids, pad)), 1)
                 start_tokens = tf.tile([[start_token]], [batch_size, tf.shape(outputs_ids)[1]])
                 groups_teacher_input_ids = tf.concat([tf.expand_dims(start_tokens, 2), outputs_ids], 2)
-                groups_teacher_input_embed = tf.nn.embedding_lookup(word_embedding, groups_teacher_input_ids)
+                # groups_teacher_input_embed = tf.nn.embedding_lookup(word_embedding, groups_teacher_input_ids)
 
             with tf.variable_scope("input_encoder"):
                 input_fw_cell = get_rnn_cell("gru", config.num_rnn_layers, config.hidden_size, config.keep_prob,
@@ -100,6 +99,7 @@ class Model(object):
                 # output[2, batch_size, seq_len, hidden_size], final_state [2, num_layers, batch_size, hidden_size]
                 # [batch_size, max_seq_length, hidden_size*2] , [batch_size, hidden_size*2]
                 # axis = sum(axis(i))
+                # batch_size feat_len hidden*2
                 input_encoder_outputs = tf.concat(input_encoder_outputs, -1)
                 if config.num_rnn_layers > 1:
                     input_encoder_final_state = tf.concat(
@@ -160,16 +160,16 @@ class Model(object):
                 # 不使用CVAE结构
                 # dec_input = input_encoder_final_state
 
-            group_decoder = get_rnn_cell("gru", config.num_rnn_layers, config.hidden_size * 4, config.keep_prob,
+            group_decoder = get_rnn_cell("gru", config.num_rnn_layers, config.hidden_size * 2, config.keep_prob,
                                          scope="infer_grouping")
             group_fc_1 = tf.layers.Dense(config.hidden_size)
             group_fc_2 = tf.layers.Dense(1)
             # 用于判断是否要继续进行下一个分组, 1停止，0继续
             stop_fc = tf.layers.Dense(1)
-            group_init_state_fc = tf.layers.Dense(config.hidden_size * 4)
+            group_init_state_fc = tf.layers.Dense(config.hidden_size * 2)
             init_input = tf.get_variable(name="start_of_group",
                                          initializer=tf.truncated_normal_initializer(),
-                                         shape=(1, 4 * config.hidden_size),
+                                         shape=(1, 2 * config.hidden_size),
                                          dtype=tf.float32)
             group_encoder = get_rnn_cell("gru",
                                          config.num_rnn_layers,
@@ -229,24 +229,25 @@ class Model(object):
             projection = tf.layers.Dense(config.vocab_size)
             bow_fc_1 = tf.layers.Dense(config.hidden_size)
             bow_fc_2 = tf.layers.Dense(config.vocab_size)
-            decoder_gru_cell = get_rnn_cell("gru", config.num_rnn_layers, config.hidden_size, config.keep_prob,
-                                            scope="decoder")
             input_lens = tf.reduce_sum(tf.to_int32(tf.not_equal(key_input_ids, pad)), 1)
 
             with tf.name_scope("train_decoder"):
                 # 分组之后，每一条数据都由多个分组组成，每个分组生成一段话，每句话之间同样有依赖
-                def train_cond(i, group_input, group_state, group_loss, stop_loss, sent_loss, kl_loss, bow_loss):
+                def train_cond(i, group_input, group_state, group_loss, stop_loss, sent_loss, bow_loss):
                     return i < tf.shape(groups_ids)[1]
 
-                def train_body(i, group_input, group_state, group_loss, stop_logits, sent_loss, kl_loss, bow_loss):
-                    teacher_input_embed = groups_teacher_input_embed[:, i, :]
+                def train_body(i, group_input, group_state, group_loss, stop_logits, sent_loss, bow_loss):
+                    # teacher_input_embed = groups_teacher_input_embed[:, i, :]
+                    # tf.nn.embedding_lookup(word_embedding, groups_teacher_input_ids)
                     # batch_size, feat_len
                     teacher_input_ids = groups_teacher_input_ids[:, i, :]
+                    teacher_input_embed = tf.nn.embedding_lookup(word_embedding, teacher_input_ids)
                     teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, pad)), 1)
                     sent_output = outputs_ids[:, i, :]
 
                     with tf.name_scope("grouping"):
                         sent_feat_ids = gidx[:, i, :, :]
+                        # batch_size, feat_cnt, hidden_size
                         sent_feat_bow = group_bow[:, i, :, :]
                         sent_feat_lens = groups_lens[:, i]
                         safe_sent_feat_lens = sent_feat_lens + tf.cast(tf.equal(sent_feat_lens, 0), dtype=tf.int32)
@@ -256,6 +257,7 @@ class Model(object):
 
                         group_output, group_state = group_decoder(group_input, tuple(
                             group_state for _ in range(config.num_rnn_layers)))
+                        group_state = group_state[-1]
                         tile_gout = tf.tile(tf.expand_dims(group_output, 1), [1, tf.shape(input_encoder_outputs)[1], 1])
                         # 判断每一个feat是否属于当前i分组
                         group_fc_input = tf.concat((input_encoder_outputs, tile_gout), 2)
@@ -272,6 +274,7 @@ class Model(object):
 
                     with tf.name_scope("train_sent_decoder"):
                         # [batch_size, hidden_size*2]
+                        group_input = group_mean_bow[:, i, :]
                         sent_dec_state = group_mean_bow[:, i, :]
                         # sent_ids = group_feat_idx[:, i, :, :]
                         # sent_input_embed = group_embed[:, i, :, :]
@@ -292,8 +295,8 @@ class Model(object):
                                                                         initial_state=train_decoder_state,
                                                                         output_layer=projection)
                         # 类似rnn的dynamic
-                        fout, fstate, flens = tf.contrib.seq2seq.dynamic_decode(basic_decoder, impute_finished=True)
-
+                        with tf.variable_scope("dynamic_decoding"):
+                            fout, fstate, flens = tf.contrib.seq2seq.dynamic_decode(basic_decoder, impute_finished=True)
                         # loss计算
                         # batch_size, seq_len
                         sent_logits = fout.rnn_output
@@ -313,7 +316,7 @@ class Model(object):
                         bow_cross_entropy = loss_mask * tf.reduce_sum(bow_cross_entropy * sent_mask, axis=1)
                         bow_loss += tf.reduce_sum(bow_cross_entropy)  # / effective_cnt
 
-                    return i + 1, group_input, group_state[-1], group_loss, stop_logits, sent_loss, kl_loss, bow_loss
+                    return i + 1, group_input, group_state, group_loss, stop_logits, sent_loss, bow_loss
 
                 group_input = tf.tile(init_input, [batch_size, 1])
                 group_state = group_init_state_fc(dec_input)
@@ -322,10 +325,10 @@ class Model(object):
                 # [max_group_cnt, batch_size]
                 stop_logits = tf.TensorArray(dtype=tf.float32, element_shape=(None,), size=tf.shape(groups_ids)[1])
 
-                _, group_input, group_state, group_loss, stop_logits, sent_loss, kl_loss, bow_loss = tf.while_loop(
+                _, group_input, group_state, group_loss, stop_logits, sent_loss, bow_loss = tf.while_loop(
                     train_cond,
                     train_body,
-                    loop_vars=(0, group_input, group_state, 0.0, stop_logits, 0.0, 0.0, 0.0))
+                    loop_vars=(0, group_input, group_state, 0.0, stop_logits, 0.0, 0.0))
 
                 with tf.name_scope("loss_computation"):
                     # [batch_size, max_group_cnt]
@@ -340,7 +343,6 @@ class Model(object):
 
                     self.sent_loss = sent_loss / tf.to_float(batch_size)
                     self.group_loss = group_loss / tf.to_float(batch_size)
-                    # self.sent_KL_divergence = KL_loss
                     # sent_KL_weight = tf.minimum(1.0, tf.to_float(self.global_step) / self.config.PHVM_sent_full_KL_step)
                     # self.type_loss = type_loss
                     self.bow_loss = bow_loss / tf.to_float(batch_size)
@@ -352,14 +354,16 @@ class Model(object):
                     #                         anneal_sent_KL + anneal_plan_KL
                     # self.anneal_elbo_loss /= tf.to_float(self.batch_size)
                     # self.train_loss = self.anneal_elbo_loss + self.stop_loss + self.bow_loss
-                    self.train_loss = self.elbo_loss + self.stop_loss + self.bow_loss
+                    kl_weight = tf.minimum(1.0, tf.to_float(tf.train.get_global_step()) / config.kl_annealing_step)
+                    self.kl_div = self.kl_divergence(prior_mu, prior_log_sigma, post_mu, post_log_sigma)
+                    self.anneal_kl_divergence = kl_weight * self.kl_div
+                    # loss由sent loss, group loss, stop loss（分几组）,bow loss（解决kl散度消失)
+                    self.train_loss = self.elbo_loss + self.stop_loss + self.anneal_kl_divergence + self.bow_loss
                 # output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=basic_decoder, impute_finished=True)
 
                 # with tf.variable_scope("loss"):
                 #     # ELBO
-                #     kl_weight = tf.minimum(1.0, tf.to_float(tf.train.get_global_step()) / config.kl_annealing_step)
-                #     self.kl_div = self.kl_divergence(prior_mu, prior_log_sigma, post_mu, post_log_sigma)
-                #     self.anneal_kl_divergence = kl_weight * self.kl_div
+
                 #
                 #     # 正常来说teacher input 的长度多了一个<start>
                 #     logits = output.rnn_output[:, :-1]
@@ -379,7 +383,7 @@ class Model(object):
                 #     self.elbo_loss = self.rec_loss + self.anneal_kl_divergence
 
             with tf.name_scope("infer_grouping"):
-                def group_cond(i, group_input, group_state, infer_groups_ids, stop):
+                def group_cond(i, group_input, group_state, infer_groups_ids, glens, stop):
                     # 第 i=0 组，直接ture，进行生成第0组，否则，判断stop == 0, 存在需要继续生成的组，没有到达最大分组数量，生成i组
                     # stop 中 等于0的元素代表继续生成， 非0代表停止的时候的长度
                     return tf.cond(tf.equal(i, 0),
@@ -391,7 +395,7 @@ class Model(object):
                                                        lambda: False),
                                                    lambda: False))
 
-                def group_body(i, group_input, group_state, infer_groups_ids, stop):
+                def group_body(i, group_input, group_state, infer_groups_ids, glens, stop):
                     # [batch_size, feat_cnt, 2], 第i组特征对应的id
                     # seg_feat_idx = feat_idx[:, i, :, :]
                     # [batch_size, hidden_size]
@@ -411,40 +415,38 @@ class Model(object):
                     group_fc_input = tf.concat((input_encoder_outputs, tile_gout), 2)
                     # [batch_size, feat_len# loss注意输入不需要经过sigmoid]
                     group_logits = tf.squeeze(group_fc_2(tf.tanh(group_fc_1(group_fc_input))), 2)
+
                     input_mask = tf.sequence_mask(input_lens, tf.shape(group_logits)[1], dtype=tf.float32)
                     group_probs = tf.sigmoid(group_logits) * input_mask
                     # 根据每一个输入对象计算得到的prob为当前分组选择id
-                    gids, glens = tf.py_func(self.select, [group_probs, tf.shape(input_encoder_outputs)[1]],
-                                             [tf.int32, tf.int32])
+                    gids, glen = tf.py_func(self.select, [group_probs, tf.shape(input_encoder_outputs)[1]],
+                                            [tf.int32, tf.int32])
                     # [batch_size, group_feat_len, feat_len]
                     # group_labels = tf.one_hot(groups_ids[:, i, :], tf.shape(group_logits)[1], dtype=tf.float32)
                     # [batch_size, feat_len]
-                    # gids = tf.reshape(gids, (batch_size, -1))
+                    gids = tf.reshape(gids, (batch_size, -1))
+                    glen = tf.reshape(glen, (-1,))
+                    expanded_glens = tf.expand_dims(glen, 1)
+                    glens = tf.concat((glens, expanded_glens), 1)
+
                     group_shape = tf.shape(gids)
                     batch_idx = tf.expand_dims(tf.range(batch_size), 1)
-                    # [batch_size, feat_len]
                     batch_idx = tf.tile(batch_idx, [1, group_shape[1]])
-                    # [batch_size,feat_len, 1]
                     batch_idx = tf.expand_dims(batch_idx, 2)
-                    # [batch_size, feat_len, 1]
                     feat_idx = tf.expand_dims(gids, 2)
-                    # [batch_size, feat_len, 2]
                     feat_idx = tf.concat((batch_idx, feat_idx), 2)
-                    # [batch_size, feat_cnt, hidden_size*4]
                     group_embed = tf.gather_nd(input_encoder_outputs, feat_idx)
-                    group_mask = tf.sequence_mask(glens, tf.shape(group_embed)[1], dtype=tf.float32)
+                    group_mask = tf.sequence_mask(glen, tf.shape(group_embed)[1], dtype=tf.float32)
                     expanded_group_mask = tf.expand_dims(group_mask, 2)
-                    # group_labels = tf.reduce_sum(group_labels * expanded_group_mask, 1)
-                    expanded_glens = tf.expand_dims(glens, 1)
-                    # [batch_size, hidden*4]
+                    # [batch_size, hidden*2]
                     group_input = tf.reduce_sum(group_embed * expanded_group_mask, axis=1) / tf.to_float(
                         expanded_glens)
                     # 此处reshape是为了解决 shape <unknown>的问题，使用py_func，没办法自动推断shape
-                    group_input = tf.reshape(group_input, (batch_size, config.hidden_size * 4))
-                    # [batch_size, m+1, feat_len]
-                    infer_groups_ids = tf.concat((infer_groups_ids, tf.expand_dims(gids, 1)), 1)
+                    group_input = tf.reshape(group_input, (batch_size, config.hidden_size * 2))
 
-                    return i + 1, group_input, group_state, infer_groups_ids, stop
+                    # [batch_size, i+1, feat_len]
+                    infer_groups_ids = tf.concat((infer_groups_ids, tf.expand_dims(gids, 1)), 1)
+                    return i + 1, group_input, group_state, infer_groups_ids, glens, stop
 
                 group_input = tf.tile(init_input, [batch_size, 1])
                 # gru的输入 batch_size, hidden*2
@@ -452,6 +454,7 @@ class Model(object):
                 # group_state = tuple(group_state for _ in range(config.num_rnn_layers))
                 # [batch_size, 1, feat_len] target [batch_size, group_len, feat_len]
                 infer_groups_ids = tf.zeros((batch_size, 1, tf.shape(input_encoder_outputs)[1]), dtype=tf.int32)
+                glens = tf.zeros((batch_size, 1), dtype=tf.int32)
                 stop = tf.zeros((batch_size,), dtype=tf.int32)
 
                 # 变量形状, 每一次prediction的shape都会发生变化，所以要确定shape_invariants
@@ -459,28 +462,30 @@ class Model(object):
                                     tf.TensorShape([None, None]),  # group_input
                                     tf.TensorShape([None, None]),  # group_state
                                     tf.TensorShape([None, None, None]),  # infer_groups_ids
+                                    tf.TensorShape([None, None]),  # glens
                                     tf.TensorShape([None])  # stop
                                     )
 
-                _, group_input, group_state, infer_groups_ids, stop = tf.while_loop(group_cond,
-                                                                                    group_body,
-                                                                                    loop_vars=(
-                                                                                        0,
-                                                                                        group_input,
-                                                                                        group_state,
-                                                                                        infer_groups_ids,
-                                                                                        stop),
-                                                                                    shape_invariants=shape_invariants)
+                _, group_input, group_state, infer_groups_ids, glens, stop = tf.while_loop(group_cond,
+                                                                                           group_body,
+                                                                                           loop_vars=(
+                                                                                               0,
+                                                                                               group_input,
+                                                                                               group_state,
+                                                                                               infer_groups_ids,
+                                                                                               glens,
+                                                                                               stop),
+                                                                                           shape_invariants=shape_invariants)
                 # 第0个变量是废弃的初始变量0000000
                 infer_groups_ids = infer_groups_ids[:, 1:, :]
 
-                infer_groups_lens = tf.reduce_sum(tf.to_int32(tf.not_equal(infer_groups_ids, pad)), 2)
-                infer_groups_cnt = tf.reduce_sum(tf.to_int32(tf.not_equal(infer_groups_lens, pad)), 1)
+                infer_groups_lens = glens[:, 1:]
+                # infer_groups_cnt = tf.reduce_sum(tf.to_int32(tf.not_equal(infer_groups_lens, pad)), 1)
                 infer_gidx, infer_group_bow, infer_group_mean_bow, infer_group_embed = self.gather_group(
                     input_encoder_outputs,
                     infer_groups_ids,
                     infer_groups_lens,
-                    infer_groups_cnt,
+                    stop,
                     group_encoder)
 
             with tf.name_scope("infer_decoder"):
@@ -489,15 +494,8 @@ class Model(object):
                     return i < tf.shape(infer_groups_ids)[1]
 
                 def infer_body(i, predictions):
-                    teacher_input_embed = groups_teacher_input_embed[:, i, :]
-                    # batch_size, feat_len
-                    teacher_input_ids = groups_teacher_input_ids[:, i, :]
-                    teacher_input_lengths = tf.reduce_sum(tf.to_int32(tf.not_equal(teacher_input_ids, pad)), 1)
                     sent_len = infer_groups_lens[:, i]
                     sent_bow = infer_group_bow[:, i, :, :]
-
-                    tf.reduce_sum(tf.to_int32(tf.not_equal(key_input_ids, pad)), 1)
-                    sent_output = outputs_ids[:, i, :]
                     with tf.name_scope("infer_sent_decoder"):
                         sent_dec_state = infer_group_mean_bow[:, i, :]
                         tile_encoder_state = tf.contrib.seq2seq.tile_batch(sent_dec_state, multiplier=beam_width)
@@ -518,24 +516,28 @@ class Model(object):
                         # length_penalty_weight=0.0, coverage_penalty_weight=0.0
                         beam_decoder = tf.contrib.seq2seq.BeamSearchDecoder(cell=infer_attn_cell,
                                                                             embedding=word_embedding,
-                                                                            start_tokens=tf.tile([start_token], [batch_size]),
+                                                                            start_tokens=tf.tile([start_token],
+                                                                                                 [batch_size]),
                                                                             end_token=pad,
                                                                             initial_state=decoder_initial_state,
                                                                             beam_width=beam_width,
-                                                                            output_layer=projection)
-
-                        output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=beam_decoder,
-                                                                         maximum_iterations=maximum_iterations)
+                                                                            output_layer=projection,
+                                                                            length_penalty_weight=0.0)
+                        with tf.variable_scope("dynamic_decoding", reuse=True):
+                            output, _, _ = tf.contrib.seq2seq.dynamic_decode(decoder=beam_decoder,
+                                                                             maximum_iterations=maximum_iterations)
                         # output.predicted_ids shape [batch_size, max_iterations, beam_width]
                         # [batch_size, max_iterations]
-                        sent_output = tf.transpose(output.predicted_ids, [0, 2, 1])[:, 0, :]
+                        sent_output = output.predicted_ids[:, :, 0]
                         # sent_output = sent_output * tf.to_int32(tf.greater_equal(sent_output, 0))
-                        # dist = self.config.PHVM_maximum_iterations - tf.shape(sent_output)[1]
+                        # dist = maximum_iterations - tf.shape(sent_output)[1]
                         # padded_sent_output = tf.cond(tf.greater(dist, 0),
                         #                              lambda: tf.concat(
                         #                                  (sent_output,
                         #                                   tf.zeros((batch_size, dist), dtype=tf.int32)), 1),
                         #                              lambda: sent_output)
+                        # predictions = tf.concat((predictions, tf.expand_dims(padded_sent_output, 1)), 1)
+                        # [batch_size, i, max_iterations]
                         predictions = tf.concat((predictions, tf.expand_dims(sent_output, 1)), 1)
                         # sent_lens = tf.argmax(tf.cast(tf.equal(pad_output, 1), dtype=tf.int32), 1,
                         #                       output_type=tf.int32)
@@ -554,7 +556,8 @@ class Model(object):
                                                infer_body,
                                                loop_vars=(0, predictions),
                                                shape_invariants=shape_invariants)
-                self.predictions = predictions
+                # [batch_size, group_cnt, max_iterations]
+                self.predictions = predictions[:, 1:, :]
 
     @staticmethod
     def kl_divergence(prior_mu, prior_log_sigma, post_mu, post_log_sigma):
@@ -577,11 +580,14 @@ class Model(object):
         fidx = tf.expand_dims(fidx, 3)
         sidx = tf.expand_dims(group_ids, 3)
         gidx = tf.concat((fidx, sidx), 3)
+        # batch_size, group_cnt, feat_cnt, hidden_size
         group_bow = tf.gather_nd(feat_embed, gidx)
         group_mask = tf.sequence_mask(group_lens, shape[2], dtype=tf.float32)
         expanded_group_mask = tf.expand_dims(group_mask, 3)
+        # batch_size, group_cnt, hidden_size
         group_sum_bow = tf.reduce_sum(group_bow * expanded_group_mask, 2)
         safe_group_lens = group_lens + tf.cast(tf.equal(group_lens, 0), dtype=tf.int32)
+        # batch_size, group_cnt, hidden_size
         group_mean_bow = group_sum_bow / tf.to_float(tf.expand_dims(safe_group_lens, 2))
 
         group_encoder_output, group_encoder_state = tf.nn.dynamic_rnn(group_encoder,
@@ -593,6 +599,8 @@ class Model(object):
         return gidx, group_bow, group_mean_bow, group_embed
 
     def select(self, group_probs, max_raw_feat_cnt):
+        # print(len(group_probs), len(group_probs[0]))
+        # print(max_raw_feat_cnt)
         gids = []
         glens = []
         for probs in group_probs:
@@ -601,18 +609,19 @@ class Model(object):
             max_p = -1
             for feat_id, p in enumerate(probs):
                 # 分类器阈值默认0.5
-                if p >= self.config.group_selection_threshold:
+                if p >= 0.5:
                     tmp.append(feat_id)
                 if p > max_p:
                     max_id = feat_id
-                max_p = p
-                # 如果说没有大于0.5的，就默认添加一个最大概率的feat到当前的分组
-                if len(tmp) == 0:
-                    tmp.append(max_id)
-                gids.append(tmp)
-                glens.append(len(tmp))
+                    max_p = p
+            # 如果说没有大于0.5的，就默认添加一个最大概率的feat到当前的分组
+            if len(tmp) == 0:
+                tmp.append(max_id)
+            gids.append(tmp)
+            glens.append(len(tmp))
         # padding
         for item in gids:
             if len(item) < max_raw_feat_cnt:
                 item += [0] * (max_raw_feat_cnt - len(item))
+        # print(len(gids), len(gids[0]))
         return np.array(gids, dtype=np.int32), np.array(glens, dtype=np.int32)

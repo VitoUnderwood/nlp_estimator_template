@@ -9,7 +9,7 @@ import numpy as np
 import tensorflow as tf
 
 from models.data2text.modeling import Model, ModelConfig
-from models.model_utils import get_out_put_from_tokens_beam_search
+from models.model_utils import get_groups_output
 
 # try:
 #     from tensorflow.python.util import module_wrapper as deprecation
@@ -84,6 +84,8 @@ flags.DEFINE_bool("do_train", False, "Whether to run train on the train set.")
 flags.DEFINE_bool("do_eval", False, "Whether to run eval on the dev set.")
 
 flags.DEFINE_bool("do_predict", False, "Whether to run the model in inference mode on the test set.")
+
+flags.DEFINE_bool("save_model", False, "Whether to save the model to PB format for tensorflow serving")
 
 flags.DEFINE_integer("train_batch_size", 32, "Total batch size for training.")
 
@@ -250,7 +252,9 @@ def convert_single_example(example: InputExample, key2id, val2id, word2id):
     outputs_ids = []
     for output in outputs:
         # teacher forcing has one new token start token, need a end token to alien
+        # print(output)
         tmp = [word2id.get(word, word2id["<UNK>"]) for word in output]
+        # print(tmp)
         tmp.append(word2id.get("<PAD>", word2id["<UNK>"]))
         outputs_ids.append(tmp)
 
@@ -262,6 +266,8 @@ def convert_single_example(example: InputExample, key2id, val2id, word2id):
         for idx, lst in enumerate(item):
             if len(lst) < max_len:
                 item[idx] = lst + [0] * (max_len - len(lst))
+    # print("output", outputs_ids)
+    # print('group', groups_ids)
 
     feature = InputFeatures(
         cate_id=cate_id,
@@ -433,16 +439,23 @@ def model_fn_builder(model_config, learning_rate, word_vectors=None):
             elbo_loss = model.elbo_loss
             stop_loss = model.stop_loss
             bow_loss = model.bow_loss
+            sent_loss = model.sent_loss
+            group_loss = model.group_loss
+            kl_loss = model.anneal_kl_divergence
             # kl_div = model.kl_
-            train_loss = model.train_loss
+            loss = model.train_loss
             tf.summary.scalar('elbo_loss', elbo_loss)
             tf.summary.scalar('stop_loss', stop_loss)
-            tf.summary.scalar('train_loss', train_loss)
+            tf.summary.scalar('sent_loss', sent_loss)
+            tf.summary.scalar('group_loss', group_loss)
+            tf.summary.scalar('bow_loss', bow_loss)
+            tf.summary.scalar('kl_loss', kl_loss)
+            tf.summary.scalar('loss', loss)
         else:
-            train_loss = None
+            loss = None
 
         if mode == tf.estimator.ModeKeys.TRAIN:
-            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(train_loss,
+            train_op = tf.train.AdamOptimizer(learning_rate=learning_rate).minimize(loss,
                                                                                     global_step=tf.train.get_global_step())
         else:
             train_op = None
@@ -472,20 +485,33 @@ def model_fn_builder(model_config, learning_rate, word_vectors=None):
         return tf.estimator.EstimatorSpec(
             mode=mode,
             predictions=predictions,
-            loss=train_loss,
+            loss=loss,
             train_op=train_op)
 
     return model_fn
 
 
 def serving_input_fn():
-    key_input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_feat_num], name='key_input_ids')
-    val_input_ids = tf.placeholder(tf.int32, [None, FLAGS.max_feat_num], name='val_input_ids')
-    output_ids = tf.placeholder(tf.int32, [None, FLAGS.max_seq_length], name='output_ids')
+    # INFO:tensorflow:*** Features ***
+    # INFO:tensorflow:name = cate_id, shape = (32, ?)
+    # INFO:tensorflow:name = groups_ids, shape = (32, ?, ?)
+    # INFO:tensorflow:name = key_input_ids, shape = (32, ?)
+    # INFO:tensorflow:name = outputs_ids, shape = (32, ?, ?)
+    # INFO:tensorflow:name = text_ids, shape = (32, ?)
+    # INFO:tensorflow:name = val_input_ids, shape = (32, ?)
+    cate_id = tf.placeholder(dtype=tf.int32, shape=[None, None], name='cate_id')
+    text_ids = tf.placeholder(dtype=tf.int32, shape=[None, None], name='text_ids')
+    groups_ids = tf.placeholder(dtype=tf.int32, shape=[None, None, None], name='groups_ids')
+    key_input_ids = tf.placeholder(dtype=tf.int32, shape=[None, None], name='key_input_ids')
+    val_input_ids = tf.placeholder(dtype=tf.int32, shape=[None, None], name='val_input_ids')
+    outputs_ids = tf.placeholder(dtype=tf.int32, shape=[None, None, None], name='outputs_ids')
     features = {
+        'cate_id': cate_id,
         'key_input_ids': key_input_ids,
         'val_input_ids': val_input_ids,
-        'output_ids': output_ids
+        'text_ids': text_ids,
+        'groups_ids': groups_ids,
+        'outputs_ids': outputs_ids
     }
 
     return tf.estimator.export.build_raw_serving_input_receiver_fn(features)()
@@ -523,7 +549,7 @@ def main(_):
 
     # 普通的Estimator
 
-    if FLAGS.do_train:
+    if FLAGS.do_train or FLAGS.do_eval:
         batch_size = FLAGS.train_batch_size
     else:
         batch_size = FLAGS.predict_batch_size
@@ -538,8 +564,8 @@ def main(_):
     # tf_random_seed = 2021,
     run_config = tf.estimator.RunConfig(
         model_dir=FLAGS.output_dir,
-        keep_checkpoint_max=3,
-        log_step_count_steps=1,
+        keep_checkpoint_max=1,
+        log_step_count_steps=100,
     )
 
     estimator = tf.estimator.Estimator(
@@ -566,12 +592,10 @@ def main(_):
 
         eval_input_fn = file_based_input_fn_builder(input_file=eval_file, is_training=False, drop_remainder=True)
 
-        # early stop hook
+        # early stop hook 默认每分钟进行检测一次，对metric进行对比
         early_stopping_hook = tf.estimator.experimental.stop_if_no_decrease_hook(estimator,
                                                                                  metric_name="loss",
-                                                                                 max_steps_without_decrease=FLAGS.max_early_stop_step,
-                                                                                 run_every_steps=1,
-                                                                                 run_every_secs=None)
+                                                                                 max_steps_without_decrease=FLAGS.max_early_stop_step)
 
         # 在train函数中存在training.latest_checkpoint(checkpoint_dir))，saver.restore()所以说每一次都会自动加载与模型匹配的参数，如果模型发生变化，
         # 会报错，这时候需要重新定义一个model dir保存新模型
@@ -594,9 +618,12 @@ def main(_):
         #         writer.write("%s = %s\n" % (key, str(result[key])))
 
         # save model for tensorflow service
-        estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
+        if FLAGS.save_model:
+            estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
 
     if FLAGS.do_predict:
+        if FLAGS.save_model:
+            estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
         predict_examples = processor.get_test_examples(FLAGS.data_dir)
         num_actual_predict_examples = len(predict_examples)
 
@@ -614,7 +641,7 @@ def main(_):
 
         result = estimator.predict(input_fn=predict_input_fn)
 
-        all_string_sent_cut, all_string_sent = get_out_put_from_tokens_beam_search(result, id2word)
+        groups_outputs = get_groups_output(result, id2word)
 
         output_predict_file = os.path.join(FLAGS.output_dir, "test_results.tsv")
 
@@ -631,10 +658,12 @@ def main(_):
                 writer.write("\n")
 
         with tf.gfile.GFile(output_predict_file, "w") as writer:
-            for each_answer in all_string_sent:
-                writer.write(each_answer + "\n")
+            for group in groups_outputs:
+                for sent in group:
+                    for word in sent:
+                        writer.write(word)
+                writer.write("\n")
 
-        estimator.export_saved_model(FLAGS.output_dir, serving_input_fn)
 
 
 if __name__ == "__main__":

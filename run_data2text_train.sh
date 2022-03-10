@@ -12,10 +12,8 @@ python run_data2text.py \
   --key_file=$MODEL_DIR/key.pkl \
   --val_file=$MODEL_DIR/val.pkl \
   --model_config_file=$MODEL_DIR/config.json \
-  --max_feat_num=10 \
-  --max_seq_length=32 \
   --train_batch_size=32 \
   --learning_rate=2e-5 \
   --output_dir=$MODEL_DIR \
   --max_early_stop_step=10 \
-  --maximum_iterations=100
+  --maximum_iterations=50
